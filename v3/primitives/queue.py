@@ -94,7 +94,7 @@ class Queue:
     #ssmith, like get, but don't return the item
     async def wait(self):
         while not self.empty():
-            await self._evget.wait()
+            await self._evput.wait()
 
     #ssmith, get the size of the next item, so we know what we are dealing with
     #before getting
