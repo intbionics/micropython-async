@@ -91,4 +91,15 @@ class Queue:
     async def join(self): # Wait for join event
         await self._jnevt.wait()
 
+    #ssmith, like get, but don't return the item
+    async def wait(self):
+        while not self.empty():
+            await self._evget.wait()
+
+    #ssmith, get the size of the next item, so we know what we are dealing with
+    #before getting
+    def peek_len(self):
+        if self.empty():
+            raise QueueEmpty()
+        return len(self._queue[0])
 
