@@ -16,6 +16,17 @@ the `ThreadSafeFlag` class does not work under the Unix build. The classes
 presented here depend on this: none can be expected to work on Unix until this
 is fixed.
 
+To install the threadsafe classes discussed here, connect the target hardware
+to WiFi and issue:
+```python
+import mip
+mip.install("github:peterhinch/micropython-async/v3/threadsafe")
+```
+On any target `mpremote` may be used:
+```bash
+$ mpremote mip install github:peterhinch/micropython-async/v3/threadsafe
+```
+
 ###### [Main README](../README.md)
 ###### [Tutorial](./TUTORIAL.md)
 
@@ -27,7 +38,8 @@ is fixed.
   1.3 [Threaded code on one core](./THREADING.md#13-threaded-code-on-one-core)  
   1.4 [Threaded code on multiple cores](./THREADING.md#14-threaded-code-on-multiple-cores)  
   1.5 [Globals](./THREADING.md#15-globals)  
-  1.6 [Debugging](./THREADING.md#16-debugging)  
+  1.6 [Allocation](./THREADING.md#16-allocation)  
+  1.7 [Debugging](./THREADING.md#17-debugging)  
  2. [Sharing data](./THREADING.md#2-sharing-data)  
   2.1 [A pool](./THREADING.md#21-a-pool) Sharing a set of variables.  
   2.2 [ThreadSafeQueue](./THREADING.md#22-threadsafequeue)  
@@ -38,6 +50,8 @@ is fixed.
   3.1 [Threadsafe Event](./THREADING.md#31-threadsafe-event)  
   3.2 [Message](./THREADING.md#32-message) A threadsafe event with data payload.  
  4. [Taming blocking functions](./THREADING.md#4-taming-blocking-functions) Enabling uasyncio to handle blocking code.  
+  4.1 [Basic approach](./THREADING.md#41-basic-approach)  
+  4.2 [More general solution](./THREADING,md#42-more-general-solution)  
  5. [Sharing a stream device](./THREADING.md#5-sharing-a-stream-device)  
  6. [Glossary](./THREADING.md#6-glossary) Terminology of realtime coding.  
 
@@ -133,7 +147,7 @@ async def foo():
         await process(d)
 ```
 
-## 1.2 Soft Interrupt Service Routines 
+## 1.2 Soft Interrupt Service Routines
 
 This also includes code scheduled by `micropython.schedule()` which is assumed
 to have been called from a hard ISR.
@@ -179,7 +193,7 @@ thread safe classes offered here do not yet support Unix.
  is only required if mutual consistency of the three values is essential.
  3. In the absence of a GIL some operations on built-in objects are not thread
  safe. For example adding or deleting items in a `dict`. This extends to global
- variables which are implemented as a `dict`. See [Globals](./THREADING.md#15-globals).
+ variables because these are implemented as a `dict`. See [Globals](./THREADING.md#15-globals).
  4. The observations in 1.3 re user defined data structures and `uasyncio`
  interfacing apply.
  5. Code running on a core other than that running `uasyncio` may block for
@@ -221,10 +235,20 @@ placeholder) before allowing other contexts to run.
 
 If globals must be created or destroyed dynamically, a lock must be used.
 
-## 1.6 Debugging
+## 1.6 Allocation
+
+Memory allocation must be prevented from occurring while a garbage collection
+(GC) is in progress. Normally this is handled transparently by the GIL; where
+there is no GIL a lock is used. The one exception is the case of a hard ISR. It
+is invalid to have a hard ISR waiting on a lock. Consequently hard ISR's are
+disallowed from allocating and an exception is thrown if this is attempted.
+
+Consequently code running in all other contexts is free to allocate.
+
+## 1.7 Debugging
 
 A key practical point is that coding errors in synchronising threads can be
-hard to locate: consequences can be extremely rare bugs or (in the case of 
+hard to locate: consequences can be extremely rare bugs or (in the case of
 multi-core systems) crashes. It is vital to be careful in the way that
 communication between the contexts is achieved. This doc aims to provide some
 guidelines and code to assist in this task.
@@ -450,7 +474,7 @@ def core_2(getq, putq):  # Run on core 2
             putq.put_sync(x, block=True)  # Wait if queue fills.
         buf.clear()
         sleep_ms(30)
-        
+
 async def sender(to_core2):
     x = 0
     while True:
@@ -634,7 +658,12 @@ again before it is accessed, the first data item will be lost.
 
 Blocking functions or methods have the potential of stalling the `uasyncio`
 scheduler. Short of rewriting them to work properly the only way to tame them
-is to run them in another thread. The following is a way to achieve this.
+is to run them in another thread. Any function to be run in this way must
+conform to the guiedelines above, notably with regard to side effects.
+
+## 4.1 Basic approach
+
+The following is a way to "unblock" a single function or method.
 ```python
 async def unblock(func, *args, **kwargs):
     def wrap(func, message, args, kwargs):
@@ -689,6 +718,42 @@ async def main():
 asyncio.run(main())
 ```
 ###### [Contents](./THREADING.md#contents)
+
+## 4.2 More general solution
+
+This provides a queueing mechanism. A task can assign a blocking function to a
+core even if the core is already busy. Further it allows for multiple cores or
+threads; these are defined as `Context` instances. Typical use:
+```python
+from threadsafe import Context
+
+core1 = Context()  # Has an instance of _thread, so a core on RP2
+
+def rats(t, n):  # Arbitrary blocking function or method
+    time.sleep(t)
+    return n * n
+
+async def some_task():
+    await core1.assign(rats, t=3, n=99)  # rats() runs on other core
+```
+#### Context class
+
+Constructor arg:
+ * `qsize=10` Size of function queue.
+
+Asynchronous method:
+ * `assign(func, *args, **kwargs)` Accepts a synchronous function with optional
+ args. These are placed on a queue for execution in the `Context` instance. The
+ method pauses until execution is complete, returning the fuction's return
+ value.
+
+The `Context` class constructor spawns a thread which waits on the `Context`
+queue. The`assign` method accepts a fuction and creates a `Job` instance. This
+includes a `ThreadSafeFlag` along with the function and its args. The `Assign`
+method places the `Job` on the queue and waits on the `ThreadSafeFlag`.
+
+The thread removes a `Job` from the queue and executes it. When complete it
+assigns the return value to the `Job` and sets the `ThreadSafeFlag`.
 
 # 5. Sharing a stream device
 

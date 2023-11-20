@@ -1,23 +1,29 @@
-# Application of uasyncio to hardware interfaces
+# MicroPython asyncio: a tutorial
 
 This tutorial is intended for users having varying levels of experience with
 asyncio and includes a section for complete beginners. It is based on the
-current version of `uasyncio`, V3.0.0. Most code samples are complete scripts
+current version of `asyncio`, V3.0.0. Most code samples are complete scripts
 which can be cut and pasted at the REPL.
 
-See [this overview](../README.md) for a summary of resources for `uasyncio`
+See [this overview](../README.md) for a summary of resources for `asyncio`
 including device drivers, debugging aids, and documentation.
+
+The name of the module was formerly `uasyncio`. To run the demo scripts on old
+firmware please use
+```python
+import uasyncio as asyncio
+```
 
 # Contents
 
  0. [Introduction](./TUTORIAL.md#0-introduction)  
-  0.1 [Installing uasyncio](./TUTORIAL.md#01-installing-uasyncio) Also the optional extensions.  
+  0.1 [Installing asyncio primitives](./TUTORIAL.md#01-installing-asyncio-primitives) Extensions used in the demos.  
  1. [Cooperative scheduling](./TUTORIAL.md#1-cooperative-scheduling)  
   1.1 [Modules](./TUTORIAL.md#11-modules)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.1 [Primitives](./TUTORIAL.md#111-primitives)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.2 [Demo programs](./TUTORIAL.md#112-demo-programs)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.3 [Device drivers](./TUTORIAL.md#113-device-drivers)  
- 2. [uasyncio](./TUTORIAL.md#2-uasyncio)  
+ 2. [asyncio concept](./TUTORIAL.md#2-asyncio-concept)  
   2.1 [Program structure](./TUTORIAL.md#21-program-structure)  
   2.2 [Coroutines and Tasks](./TUTORIAL.md#22-coroutines-and-tasks)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;2.2.1 [Queueing a task for scheduling](./TUTORIAL.md#221-queueing-a-task-for-scheduling)  
@@ -36,6 +42,7 @@ including device drivers, debugging aids, and documentation.
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.4.1 [BoundedSemaphore](./TUTORIAL.md#341-boundedsemaphore)  
   3.5 [Queue](./TUTORIAL.md#35-queue)  
   3.6 [ThreadSafeFlag](./TUTORIAL.md#36-threadsafeflag) Synchronisation with asynchronous events and interrupts.  
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.6.1 [Querying a ThreadSafeFlag](./TUTORIAL.md#361-querying-a-threadsafeflag) Check its state without blocking.  
   3.7 [Barrier](./TUTORIAL.md#37-barrier)  
   3.8 [Delay_ms](./TUTORIAL.md#38-delay_ms-class) Software retriggerable delay.  
   3.9 [Message](./TUTORIAL.md#39-message)  
@@ -68,7 +75,7 @@ including device drivers, debugging aids, and documentation.
   temperature and humidity sensor.  
  7. [Hints and tips](./TUTORIAL.md#7-hints-and-tips)  
   7.1 [Program hangs](./TUTORIAL.md#71-program-hangs)  
-  7.2 [uasyncio retains state](./TUTORIAL.md#72-uasyncio-retains-state)  
+  7.2 [asyncio retains state](./TUTORIAL.md#72-asyncio-retains-state)  
   7.3 [Garbage Collection](./TUTORIAL.md#73-garbage-collection)  
   7.4 [Testing](./TUTORIAL.md#74-testing)  
   7.5 [A common error](./TUTORIAL.md#75-a-common-error) This can be hard to find.  
@@ -76,12 +83,12 @@ including device drivers, debugging aids, and documentation.
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7.6.1 [WiFi issues](./TUTORIAL.md#761-wifi-issues)  
   7.7 [CPython compatibility and the event loop](./TUTORIAL.md#77-cpython-compatibility-and-the-event-loop) Compatibility with CPython 3.5+  
   7.8 [Race conditions](./TUTORIAL.md#78-race-conditions)  
-  7.9 [Undocumented uasyncio features](./TUTORIAL.md#79-undocumented-uasyncio-features)  
+  7.9 [Undocumented asyncio features](./TUTORIAL.md#79-undocumented-asyncio-features)  
  8. [Notes for beginners](./TUTORIAL.md#8-notes-for-beginners)  
   8.1 [Problem 1: event loops](./TUTORIAL.md#81-problem-1:-event-loops)  
   8.2 [Problem 2: blocking methods](./TUTORIAL.md#8-problem-2:-blocking-methods)  
-  8.3 [The uasyncio approach](./TUTORIAL.md#83-the-uasyncio-approach)  
-  8.4 [Scheduling in uasyncio](./TUTORIAL.md#84-scheduling-in-uasyncio)  
+  8.3 [The asyncio approach](./TUTORIAL.md#83-the-asyncio-approach)  
+  8.4 [Scheduling in asyncio](./TUTORIAL.md#84-scheduling-in-asyncio)  
   8.5 [Why cooperative rather than pre-emptive?](./TUTORIAL.md#85-why-cooperative-rather-than-pre-emptive)  
   8.6 [Communication](./TUTORIAL.md#86-communication)  
  9. [Polling vs Interrupts](./TUTORIAL.md#9-polling-vs-interrupts) A common
@@ -97,7 +104,7 @@ Most of this document assumes some familiarity with asynchronous programming.
 For those new to it an introduction may be found
 [in section 8](./TUTORIAL.md#8-notes-for-beginners).
 
-The MicroPython `uasyncio` library comprises a subset of Python's `asyncio`
+The MicroPython `asyncio` library comprises a subset of Python's `asyncio`
 library. It is designed for use on microcontrollers. As such it has a small RAM
 footprint and fast context switching with zero RAM allocation. This document
 describes its use with a focus on interfacing hardware devices. The aim is to
@@ -109,21 +116,24 @@ Another major application area for asyncio is in network programming: many
 guides to this may be found online.
 
 Note that MicroPython is based on Python 3.4 with additions from later versions.
-This version of `uasyncio` supports a subset of CPython 3.8 `asyncio`. This
+This version of `asyncio` supports a subset of CPython 3.8 `asyncio`. This
 document identifies supported features. Except where stated program samples run
 under MicroPython and CPython 3.8.
 
 This tutorial aims to present a consistent programming style compatible with
 CPython V3.8 and above.
 
-## 0.1 Installing uasyncio
-
-Firmware builds after V1.13 incorporate `uasyncio`. Check the firmware version
-number reported on boot and upgrade if necessary.
+## 0.1 Installing asyncio primitives
 
 This repository has optional unofficial primitives and extensions. To install
-these the repo should be cloned to a PC. The directories `primitives` and
-`threadsafe` (with contents) should be copied to the hardware plaform.
+these, connect the target hardware to WiFi and issue:
+```python
+import mip
+mip.install("github:peterhinch/micropython-async/v3/primitives")
+mip.install("github:peterhinch/micropython-async/v3/threadsafe")
+```
+For non-networked targets use `mpremote` as described in
+[the official docs](http://docs.micropython.org/en/latest/reference/packages.html#installing-packages-with-mpremote).
 
 ###### [Main README](../README.md)
 
@@ -141,15 +151,19 @@ pitfalls associated with truly asynchronous threads of execution.
 
 The directory `primitives` contains a Python package containing the following:
  * Synchronisation primitives: "micro" versions of CPython's classes.
- * Additional Python primitives including an ISR-compatible version of `Event`
- and a software retriggerable delay class.
+ * Additional Python primitives including a software retriggerable delay class
+ and a MicroPython optimised `ringbuf_queue`.
  * Primitives for interfacing hardware. These comprise classes for debouncing
- switches and pushbuttons and an asynchronous ADC class. These are documented
- [here](./DRIVERS.md).
+ switches and pushbuttons, an `Encoder` class and an asynchronous ADC class.
+ These are documented [here](./DRIVERS.md).
+ * Primitives for event-based coding which aims to reduce the use of callbacks
+ and is discussed [here](./EVENTS.md).
 
-To install this Python package copy the `primitives` directory tree and its
-contents to your hardware's filesystem. There is no need to copy the `tests`
-subdirectory.
+The directory `threadsafe` includes primitives designed to interface `asyncio`
+tasks to code running on other threads. These are documented
+[here](./THREADING.md).
+
+See above for installation.
 
 ### 1.1.2 Demo programs
 
@@ -175,7 +189,7 @@ runs to soft reset the hardware.
  6. [gather.py](../as_demos/gather.py) Use of `gather`. Any target.
  7. [iorw.py](../as_demos/iorw.py) Demo of a read/write device driver using the
  stream I/O mechanism. Requires a Pyboard.
- 8. [rate.py](../as_demos/rate.py) Benchmark for uasyncio. Any target.
+ 8. [rate.py](../as_demos/rate.py) Benchmark for asyncio. Any target.
 
 Demos are run using this pattern:
 ```python
@@ -202,7 +216,7 @@ target. They have their own documentation as follows:
 
 ###### [Contents](./TUTORIAL.md#contents)
 
-# 2. uasyncio
+# 2. asyncio concept
 
 The asyncio concept is of cooperative multi-tasking based on coroutines
 (coros). A coro is similar to a function but is intended to run concurrently
@@ -214,7 +228,7 @@ yielding to the scheduler, enabling other coros to be scheduled.
 Consider the following example:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 async def bar():
     count = 0
     while True:
@@ -233,7 +247,7 @@ In this trivial example, there is only one task: `bar`. If there were others,
 the scheduler would schedule them in periods when `bar` was paused:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 async def bar(x):
     count = 0
     while True:
@@ -242,8 +256,9 @@ async def bar(x):
         await asyncio.sleep(1)  # Pause 1s
 
 async def main():
+    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
     for x in range(3):
-        asyncio.create_task(bar(x))
+        tasks[x] = asyncio.create_task(bar(x))
     await asyncio.sleep(10)
 
 asyncio.run(main())
@@ -254,14 +269,14 @@ for execution. When `main` sleeps for 10s the `bar` instances are scheduled in
 turn, each time they yield to the scheduler with `await asyncio.sleep(1)`.
 
 In this instance `main()` terminates after 10s. This is atypical of embedded
-`uasyncio` systems. Normally the application is started at power up by a one
+`asyncio` systems. Normally the application is started at power up by a one
 line `main.py` and runs forever.
 
 ###### [Contents](./TUTORIAL.md#contents)
 
 ## 2.2 Coroutines and Tasks
 
-The fundmental building block of `uasyncio` is a coro. This is defined with
+The fundmental building block of `asyncio` is a coro. This is defined with
 `async def` and usually contains at least one `await` statement. This minimal
 example waits 1 second before printing a message:
 
@@ -271,14 +286,14 @@ async def bar():
     print('Done')
 ```
 
-V3 `uasyncio` introduced the concept of a `Task`. A `Task` instance is created
+V3 `asyncio` introduced the concept of a `Task`. A `Task` instance is created
 from a coro by means of the `create_task` method, which causes the coro to be
 scheduled for execution and returns a `Task` instance. In many cases, coros and
 tasks are interchangeable: the official docs refer to them as `awaitable`, for
 the reason that either of them may be the target of an `await`. Consider this:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 async def bar(t):
     print('Bar started: waiting {}secs'.format(t))
     await asyncio.sleep(t)
@@ -311,7 +326,7 @@ the `roundrobin.py` example.
 
 If a `Task` is run concurrently with `.create_task` it may be cancelled. The
 `.create_task` method returns the `Task` instance which may be saved for status
-checking or cancellation.
+checking or cancellation. See note below.
 
 In the following code sample three `Task` instances are created and scheduled
 for execution. The "Tasks are running" message is immediately printed. The
@@ -320,7 +335,34 @@ pauses, the scheduler grants execution to the next, giving the illusion of
 concurrency:
 
 ```python
-import uasyncio as asyncio
+import asyncio
+async def bar(x):
+    count = 0
+    while True:
+        count += 1
+        print('Instance: {} count: {}'.format(x, count))
+        await asyncio.sleep(1)  # Pause 1s
+
+async def main():
+    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
+    for x in range(3):
+        tasks[x] = asyncio.create_task(bar(x))
+    print('Tasks are running')
+    await asyncio.sleep(10)
+
+asyncio.run(main())
+```
+### Note on CPython compatibility
+
+The CPython [docs](https://docs.python.org/3/library/asyncio-task.html#creating-tasks)
+have a warning that a reference to the task instance should be saved for the
+task's duration. This was raised in
+[this issue](https://github.com/micropython/micropython/issues/12299).
+MicroPython `asyncio` does not suffer from this bug, but writers of code which
+must work in CPython and MicroPython should take note. Code samples in this doc
+are CPython-compatible, but following version is valid in MicroPython:
+```python
+import asyncio
 async def bar(x):
     count = 0
     while True:
@@ -330,7 +372,7 @@ async def bar(x):
 
 async def main():
     for x in range(3):
-        asyncio.create_task(bar(x))
+        asyncio.create_task(bar(x))  # No reference stored
     print('Tasks are running')
     await asyncio.sleep(10)
 
@@ -374,7 +416,7 @@ async def schedule(cb, t, *args, **kwargs):
 ```
 In this example the callback runs after three seconds:
 ```python
-import uasyncio as asyncio
+import asyncio
 
 async def schedule(cbk, t, *args, **kwargs):
     await asyncio.sleep(t)
@@ -409,11 +451,11 @@ result = await my_task()
 
 It is possible to await completion of a set of multiple asynchronously running
 tasks, accessing the return value of each. This is done by
-[uasyncio.gather](./TUTORIAL.md#33-gather) which launches the tasks and pauses
+[asyncio.gather](./TUTORIAL.md#33-gather) which launches the tasks and pauses
 until the last terminates. It returns a list containing the data returned by
 each task:
 ```python
-import uasyncio as asyncio
+import asyncio
 
 async def bar(n):
     for count in range(n):
@@ -449,14 +491,14 @@ will throw an exception in this case. MicroPython
 [does not](https://github.com/micropython/micropython/issues/6174), but it's
 wise to avoid doing this.
 
-Lastly, `uasyncio` retains state. This means that, by default, you need to
+Lastly, `asyncio` retains state. This means that, by default, you need to
 reboot between runs of an application. This can be fixed with the
 `new_event_loop` method discussed
-[in 7.2](./TUTORIAL.md#72-uasyncio-retains-state).
+[in 7.2](./TUTORIAL.md#72-asyncio-retains-state).
 
 These considerations suggest the following application structure:
 ```python
-import uasyncio as asyncio
+import asyncio
 from my_app import MyClass
 
 def set_global_exception():
@@ -470,7 +512,7 @@ def set_global_exception():
 async def main():
     set_global_exception()  # Debug aid
     my_class = MyClass()  # Constructor might create tasks
-    asyncio.create_task(my_class.foo())  # Or you might do this
+    task = asyncio.create_task(my_class.foo())  # Or you might do this
     await my_class.run_forever()  # Non-terminating method
 try:
     asyncio.run(main())
@@ -524,7 +566,7 @@ until the consumer is ready to access the data.
 In simple applications, communication may be achieved with global flags or bound
 variables. A more elegant approach is to use synchronisation primitives.
 CPython provides the following classes:  
- * `Lock` - already incorporated in new `uasyncio`.
+ * `Lock` - already incorporated in new `asyncio`.
  * `Event` - already incorporated.
  * `ayncio.gather` - already incorporated.
  * `Semaphore` In this repository.
@@ -550,11 +592,11 @@ target. A primitive is loaded by issuing (for example):
 from primitives import Semaphore, BoundedSemaphore
 from primitives import Queue
 ```
-When `uasyncio` acquires official versions of the CPython primitives, the
+When `asyncio` acquires official versions of the CPython primitives, the
 invocation lines alone should be changed. E.g.:
 ```python
-from uasyncio import Semaphore, BoundedSemaphore
-from uasyncio import Queue
+from asyncio import Semaphore, BoundedSemaphore
+from asyncio import Queue
 ```
 ##### Note on CPython compatibility
 
@@ -580,8 +622,8 @@ wishing to access the shared resource. Each task attempts to acquire the lock,
 pausing execution until it succeeds.
 
 ```python
-import uasyncio as asyncio
-from uasyncio import Lock
+import asyncio
+from asyncio import Lock
 
 async def task(i, lock):
     while 1:
@@ -592,8 +634,9 @@ async def task(i, lock):
 
 async def main():
     lock = Lock()  # The Lock instance
+    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
     for n in range(1, 4):
-        asyncio.create_task(task(n, lock))
+        tasks[n - 1] = asyncio.create_task(task(n, lock))
     await asyncio.sleep(10)
 
 asyncio.run(main())  # Run for 10s
@@ -610,19 +653,20 @@ A task waiting on a lock may be cancelled or may be run subject to a timeout.
 The normal way to use a `Lock` is in a context manager:
 
 ```python
-import uasyncio as asyncio
-from uasyncio import Lock
+import asyncio
+from asyncio import Lock
 
 async def task(i, lock):
     while 1:
         async with lock:
             print("Acquired lock in task", i)
             await asyncio.sleep(0.5)
- 
+
 async def main():
     lock = Lock()  # The Lock instance
+    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
     for n in range(1, 4):
-        asyncio.create_task(task(n, lock))
+        tasks[n - 1] = asyncio.create_task(task(n, lock))
     await asyncio.sleep(10)
 
 asyncio.run(main())  # Run for 10s
@@ -639,8 +683,8 @@ continue. An `Event` object is instantiated and made accessible to all tasks
 using it:
 
 ```python
-import uasyncio as asyncio
-from uasyncio import Event
+import asyncio
+from asyncio import Event
 
 async def waiter(event):
     print('Waiting for event')
@@ -650,7 +694,7 @@ async def waiter(event):
 
 async def main():
     event = Event()
-    asyncio.create_task(waiter(event))
+    task = asyncio.create_task(waiter(event))
     await asyncio.sleep(2)
     print('Setting event')
     event.set()
@@ -730,7 +774,7 @@ until all passed `Event`s have been set:
 from primitives import WaitAll
 evt1 = Event()
 evt2 = Event()
-wa = WaitAll((evt1, evt2)).wait() 
+wa = WaitAll((evt1, evt2)).wait()
 # Launch tasks that might trigger these events
 await wa
 # Both were triggered
@@ -749,7 +793,7 @@ yet officially supported by MicroPython.
 
 ### 3.3.1 gather
 
-This official `uasyncio` asynchronous method causes a number of tasks to run,
+This official `asyncio` asynchronous method causes a number of tasks to run,
 pausing until all have either run to completion or been terminated by
 cancellation or timeout. It returns a list of the return values of each task.
 
@@ -768,10 +812,7 @@ of return values.
 The following script may be used to demonstrate this behaviour:
 
 ```python
-try:
-    import uasyncio as asyncio
-except ImportError:
-    import asyncio
+import asyncio
 
 async def barking(n):
     print('Start barking')
@@ -803,7 +844,7 @@ async def main():
     tasks = [asyncio.create_task(bar(70))]
     tasks.append(barking(21))
     tasks.append(asyncio.wait_for(foo(10), 7))
-    asyncio.create_task(do_cancel(tasks[0]))
+    can = asyncio.create_task(do_cancel(tasks[0]))
     res = None
     try:
         res = await asyncio.gather(*tasks, return_exceptions=True)
@@ -822,9 +863,10 @@ The `TaskGroup` class is unofficially provided by
 suited to applications where one or more of a group of tasks is subject to
 runtime exceptions. A `TaskGroup` is instantiated in an asynchronous context
 manager. The `TaskGroup` instantiates member tasks. When all have run to
-completion, the context manager terminates. Return values from member tasks
-cannot be retrieved. Results should be passed in other ways such as via bound
-variables, queues etc.
+completion, the context manager terminates. Where `gather` is static, a task
+group can be dynamic: a task in a group may spawn further group members. Return
+values from member tasks cannot be retrieved. Results should be passed in other
+ways such as via bound variables, queues etc.
 
 An exception in a member task not trapped by that task is propagated to the
 task that created the `TaskGroup`. All tasks in the `TaskGroup` then terminate
@@ -837,7 +879,7 @@ but the other members continue to run.
 
 The following illustrates the basic salient points of using a `TaskGroup`:
 ```python
-import uasyncio as asyncio
+import asyncio
 async def foo(n):
     for x in range(10 + n):
         print(f"Task {n} running.")
@@ -856,7 +898,7 @@ This more complete example illustrates an exception which is not trapped by the
 member task. Cleanup code on all members runs when the exception occurs,
 followed by exception handling code in `main()`.
 ```python
-import uasyncio as asyncio
+import asyncio
 fail = True  # Set False to demo normal completion
 async def foo(n):
     print(f"Task {n} running...")
@@ -882,6 +924,9 @@ async def main():
 
 asyncio.run(main())
 ```
+[This doc](https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/)
+provides background on the theory behind task groups and how they can improve
+program structure and reliablity.
 
 ###### [Contents](./TUTORIAL.md#contents)
 
@@ -910,7 +955,7 @@ The easiest way to use it is with an asynchronous context manager. The
 following illustrates tasks accessing a resource one at a time:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 from primitives import Semaphore
 
 async def foo(n, sema):
@@ -921,8 +966,9 @@ async def foo(n, sema):
 
 async def main():
     sema = Semaphore()
+    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
     for num in range(3):
-        asyncio.create_task(foo(num, sema))
+        tasks[num] = asyncio.create_task(foo(num, sema))
     await asyncio.sleep(2)
 
 asyncio.run(main())
@@ -952,13 +998,13 @@ producer puts data items onto the queue with the consumer removing them. If the
 queue becomes full, the producer task will block, likewise if the queue becomes
 empty the consumer will block. Some queue implementations allow producer and
 consumer to run in different contexts: for example where one runs in an
-interrupt service routine or on a different thread or core from the `uasyncio`
+interrupt service routine or on a different thread or core from the `asyncio`
 application. Such a queue is termed "thread safe".
 
 The `Queue` class is an unofficial implementation whose API is a subset of that
 of CPython's `asyncio.Queue`. Like `asyncio.Queue` this class is not thread
 safe. A queue class optimised for MicroPython is presented in
-[Ringbuf queue](./EVENTS.md#7-ringbuf-queue). A thread safe version is
+[Ringbuf Queue](./DRIVERS.md#7-ringbuf-queue). A thread safe version is
 documented in [ThreadSafeQueue](./THREADING.md#22-threadsafequeue).
 
 Constructor:  
@@ -984,7 +1030,7 @@ Asynchronous methods:
  processed (indicated via task_done).
 
 ```python
-import uasyncio as asyncio
+import asyncio
 from primitives import Queue
 
 async def slow_process():
@@ -1004,8 +1050,8 @@ async def consume(queue):
 
 async def queue_go(delay):
     queue = Queue()
-    asyncio.create_task(consume(queue))
-    asyncio.create_task(produce(queue))
+    t1 = asyncio.create_task(consume(queue))
+    t2 = asyncio.create_task(produce(queue))
     await asyncio.sleep(delay)
     print("Done")
 
@@ -1016,7 +1062,7 @@ asyncio.run(queue_go(4))
 
 ## 3.6 ThreadSafeFlag
 
-See also [Interfacing uasyncio to interrupts](./INTERRUPTS.md). Because of
+See also [Interfacing asyncio to interrupts](./INTERRUPTS.md). Because of
 [this issue](https://github.com/micropython/micropython/issues/7965) the
 `ThreadSafeFlag` class does not work under the Unix build.
 
@@ -1035,14 +1081,14 @@ Asynchronous method:
  * `wait` Wait for the flag to be set. If the flag is already set then it
  returns immediately.
 
-Typical usage is having a `uasyncio` task wait on a hard ISR. Only one task
+Typical usage is having a `asyncio` task wait on a hard ISR. Only one task
 should wait on a `ThreadSafeFlag`. The hard ISR services the interrupting
 device, sets the `ThreadSafeFlag`, and quits. A single task waits on the flag.
 This design conforms with the self-clearing behaviour of the `ThreadSafeFlag`.
 Each interrupting device has its own `ThreadSafeFlag` instance and its own
 waiting task.
 ```python
-import uasyncio as asyncio
+import asyncio
 from pyb import Timer
 
 tsf = asyncio.ThreadSafeFlag()
@@ -1064,7 +1110,7 @@ An example [based on one posted by Damien](https://github.com/micropython/microp
 Link pins X1 and X2 to test.
 ```python
 from machine import Pin, Timer
-import uasyncio as asyncio
+import asyncio
 
 class AsyncPin:
     def __init__(self, pin, trigger):
@@ -1104,6 +1150,49 @@ processing received data.
 See [Threadsafe Event](./THREADING.md#31-threadsafe-event) for a thread safe
 class which allows multiple tasks to wait on it.
 
+### 3.6.1 Querying a ThreadSafeFlag
+
+The state of a ThreadSafeFlag may be tested as follows:
+```python
+import asyncio
+from select import poll, POLLIN
+from time import ticks_us, ticks_diff
+
+async def foo(tsf):  # Periodically set the ThreadSafeFlag
+    while True:
+        await asyncio.sleep(1)
+        tsf.set()
+
+    def ready(tsf, poller):
+        r = (tsf, POLLIN)
+        poller.register(*r)
+
+        def is_rdy():
+            return r in poller.ipoll(0)
+
+        return is_rdy
+
+async def test():
+    tsf = asyncio.ThreadSafeFlag()
+    tsk = asyncio.create_task(foo(tsf))
+    mpoll = poll()
+    tsf_ready = ready(tsf, mpoll)  # Create a ready function
+    for _ in range(25):  # Run for 5s
+        if tsf_ready():
+            print("tsf ready")
+            t = ticks_us()
+            await tsf.wait()
+            print(f"got tsf in {ticks_diff(ticks_us(), t)}us")
+        else:
+            print("Not ready")
+            await asyncio.sleep_ms(200)
+
+asyncio.run(test())
+```
+The `ready` closure returns a nonblocking function which tests the status of a
+given flag. In the above example `.wait()` is not called until the flag has been
+set, consequently `.wait()` returns rapidly.
+
 ###### [Contents](./TUTORIAL.md#contents)
 
 ## 3.7 Barrier
@@ -1141,7 +1230,7 @@ some hardware and transmits it concurrently on a number of interfaces. These
 run at different speeds. The `Barrier` synchronises these loops. This can run
 on a Pyboard.
 ```python
-import uasyncio as asyncio
+import asyncio
 from primitives import Barrier
 from machine import UART
 import ujson
@@ -1170,8 +1259,9 @@ async def main():
     sw1 = asyncio.StreamWriter(UART(1, 9600), {})
     sw2 = asyncio.StreamWriter(UART(2, 1200), {})
     barrier = Barrier(3)
+    tasks = [None] * 2  # For CPython compaibility must store a reference see Note
     for n, sw in enumerate((sw1, sw2)):
-        asyncio.create_task(sender(barrier, sw, n + 1))
+        tasks[n] = asyncio.create_task(sender(barrier, sw, n + 1))
     await provider(barrier)
 
 asyncio.run(main())
@@ -1218,105 +1308,12 @@ indicate that is has passed the critical point.
 ## 3.8 Delay_ms class
 
 This implements the software equivalent of a retriggerable monostable or a
-watchdog timer. It has an internal boolean `running` state. When instantiated
-the `Delay_ms` instance does nothing, with `running` `False` until triggered.
-Then `running` becomes `True` and a timer is initiated. This can be prevented
-from timing out by triggering it again (with a new timeout duration). So long
-as it is triggered before the time specified in the preceeding trigger it will
-never time out.
+watchdog timer. On timeout it can launch a callback or coroutine. It exposes an
+`Event` allowing a task to pause until a timeout occurs. The delay period may be
+altered dynamically.
 
-If it does time out the `running` state will revert to `False`. This can be
-interrogated by the object's `running()` method. In addition a `callable` can
-be specified to the constructor. A `callable` can be a callback or a coroutine.
-A callback will execute when a timeout occurs; where the `callable` is a
-coroutine it will be converted to a `Task` and run asynchronously.
-
-Constructor arguments (defaults in brackets):
-
- 1. `func` The `callable` to call on timeout (default `None`).
- 2. `args` A tuple of arguments for the `callable` (default `()`).
- 3. `can_alloc` Unused arg, retained to avoid breaking code.
- 4. `duration` Integer, default 1000 ms. The default timer period where no value
- is passed to the `trigger` method.
-
-Synchronous methods:
-
- 1. `trigger` optional argument `duration=0`. A timeout will occur after
- `duration` ms unless retriggered. If no arg is passed the period will be that
- of the `duration` passed to the constructor. The method can be called from a
- hard or soft ISR. It is now valid for `duration` to be less than the current
- time outstanding.
- 2. `stop` No argument. Cancels the timeout, setting the `running` status
- `False`. The timer can be restarted by issuing `trigger` again. Also clears
- the `Event` described in `wait` below.
- 3. `running` No argument. Returns the running status of the object.
- 4. `__call__` Alias for running.
- 5. `rvalue` No argument. If a timeout has occurred and a callback has run,
- returns the return value of the callback. If a coroutine was passed, returns
- the `Task` instance. This allows the `Task` to be cancelled or awaited.
- 6. `callback` args `func=None`, `args=()`. Allows the callable and its args to
- be assigned, reassigned or disabled at run time.
- 7. `deinit` No args. Cancels the running task. See [Object scope](./TUTORIAL.md#44-object-scope).
- 8. `clear` No args. Clears the `Event` described in `wait` below.
- 9. `set` No args. Sets the `Event` described in `wait` below.
-
-Asynchronous method:
- 1. `wait` One or more tasks may wait on a `Delay_ms` instance. Pause until the
- delay instance has timed out.
-
-In this example a `Delay_ms` instance is created with the default duration of
-1 sec. It is repeatedly triggered for 5 secs, preventing the callback from
-running. One second after the triggering ceases, the callback runs.
-
-```python
-import uasyncio as asyncio
-from primitives import Delay_ms
-
-async def my_app():
-    d = Delay_ms(callback, ('Callback running',))
-    print('Holding off callback')
-    for _ in range(10):  # Hold off for 5 secs
-        await asyncio.sleep_ms(500)
-        d.trigger()
-    print('Callback will run in 1s')
-    await asyncio.sleep(2)
-    print('Done')
-
-def callback(v):
-    print(v)
-
-try:
-    asyncio.run(my_app())
-finally:
-    asyncio.new_event_loop()  # Clear retained state
-```
-This example illustrates multiple tasks waiting on a `Delay_ms`. No callback is
-used.
-```python
-import uasyncio as asyncio
-from primitives import Delay_ms
-
-async def foo(n, d):
-    await d.wait()
-    d.clear()  # Task waiting on the Event must clear it
-    print('Done in foo no.', n)
-
-async def my_app():
-    d = Delay_ms()
-    for n in range(4):
-        asyncio.create_task(foo(n, d))
-    d.trigger(3000)
-    print('Waiting on d')
-    await d.wait()
-    print('Done in my_app.')
-    await asyncio.sleep(1)
-    print('Test complete.')
-
-try:
-    asyncio.run(my_app())
-finally:
-    _ = asyncio.new_event_loop()  # Clear retained state
-```
+It may be found in the `primitives` directory and is documented in
+[Delay_ms class](./DRIVERS.md#8-delay_ms-class).
 
 ## 3.9 Message
 
@@ -1335,10 +1332,15 @@ It may be found in the `threadsafe` directory and is documented
 ## 3.10 Synchronising to hardware
 
 The following hardware-related classes are documented [here](./DRIVERS.md):
+ * `ESwitch` A debounced switch with an `Event` interface.
  * `Switch` A debounced switch which can trigger open and close user callbacks.
+ * `EButton` Debounced pushbutton with `Event` instances for pressed, released,
+ long press or double-press.
  * `Pushbutton` Debounced pushbutton with callbacks for pressed, released, long
  press or double-press.
  * `ESP32Touch` Extends `Pushbutton` class to support ESP32 touchpads.
+ * `Keyboard` Interface a crosspoint array of buttons e.g. keypads.
+ * `SwArray` Interface a crosspoint array of pushbuttons or switches.
  * `Encoder` An asynchronous interface for control knobs with switch contacts
  configured as a quadrature encoder.
  * `AADC` Asynchronous ADC. A task can pause until the value read from an ADC
@@ -1371,7 +1373,7 @@ The calling coro blocks, but other coros continue to run. The key point is that
 it has completed.
 
 ```python
-import uasyncio as asyncio
+import asyncio
 
 class Foo():
     def __iter__(self):
@@ -1418,12 +1420,9 @@ method which retrieves a generator. This is portable and was tested under
 CPython 3.8:
 
 ```python
-up = False  # Running under MicroPython?
-try:
-    import uasyncio as asyncio
-    up = True  # Or can use sys.implementation.name
-except ImportError:
-    import asyncio
+import sys
+up = sys.implementation.name == "micropython"
+import asyncio
 
 async def times_two(n):  # Coro to await
     await asyncio.sleep(1)
@@ -1472,7 +1471,7 @@ its `next` method. The class must conform to the following requirements:
 Successive values are retrieved with `async for` as below:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 class AsyncIterable:
     def __init__(self):
         self.data = (1, 2, 3, 4, 5)
@@ -1540,7 +1539,7 @@ comes from the `Lock` class:
 If the `async with` has an `as variable` clause the variable receives the
 value returned by `__aenter__`. The following is a complete example:
 ```python
-import uasyncio as asyncio
+import asyncio
 
 class Foo:
     def __init__(self):
@@ -1587,7 +1586,7 @@ block or in a context manager.
 
 # 5 Exceptions timeouts and cancellation
 
-These topics are related: `uasyncio` enables the cancellation of tasks, and the
+These topics are related: `asyncio` enables the cancellation of tasks, and the
 application of a timeout to a task, by throwing an exception to the task.
 
 ## 5.1 Exceptions
@@ -1604,7 +1603,7 @@ exception propagates to that task, the scheduler will stop. This can be
 demonstrated as follows:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 
 async def bar():
     await asyncio.sleep(0)
@@ -1617,7 +1616,7 @@ async def foo():
     print('Does not print')  # Because bar() raised an exception
 
 async def main():
-    asyncio.create_task(foo())
+    task = asyncio.create_task(foo())
     for _ in range(5):
         print('Working')  # Carries on after the exception
         await asyncio.sleep(0.5)
@@ -1635,7 +1634,7 @@ would stop.
 #### Warning
 
 Using `throw` or `close` to throw an exception to a task is unwise. It subverts
-`uasyncio` by forcing the task to run, and possibly terminate, when it is still
+`asyncio` by forcing the task to run, and possibly terminate, when it is still
 queued for execution.
 
 ### 5.1.1 Global exception handler
@@ -1644,7 +1643,7 @@ During development, it is often best if untrapped exceptions stop the program
 rather than merely halting a single task. This can be achieved by setting a
 global exception handler. This debug aid is not CPython compatible:
 ```python
-import uasyncio as asyncio
+import asyncio
 import sys
 
 def _handle_exception(loop, context):
@@ -1660,7 +1659,7 @@ async def bar():
 async def main():
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(_handle_exception)
-    asyncio.create_task(bar())
+    task = asyncio.create_task(bar())
     for _ in range(5):
         print('Working')
         await asyncio.sleep(0.5)
@@ -1674,7 +1673,7 @@ There is a "gotcha" illustrated by the following code sample. If allowed to run
 to completion, it works as expected.
 
 ```python
-import uasyncio as asyncio
+import asyncio
 async def foo():
     await asyncio.sleep(3)
     print('About to throw exception.')
@@ -1705,7 +1704,7 @@ except KeyboardInterrupt:
 ```
 
 However, issuing a keyboard interrupt causes the exception to go to the
-outermost scope. This is because `uasyncio.sleep` causes execution to be
+outermost scope. This is because `asyncio.sleep` causes execution to be
 transferred to the scheduler. Consequently, applications requiring cleanup code
 in response to a keyboard interrupt should trap the exception at the outermost
 scope.
@@ -1723,7 +1722,7 @@ task waiting on (say) an `Event` or a `sleep` will be cancelled.
 For tasks launched with `.create_task` the exception is transparent to the
 user: the task simply stops as described above. It is possible to trap the
 exception, for example to perform cleanup code, typically in a `finally`
-clause. The exception thrown to the task is `uasyncio.CancelledError` in both
+clause. The exception thrown to the task is `asyncio.CancelledError` in both
 cancellation and timeout. There is no way for the task to distinguish between
 these two cases.
 
@@ -1738,7 +1737,7 @@ the outer scope.
 The `Task` class has a `cancel` method. This throws a `CancelledError` to the
 task. This works with nested tasks. Usage is as follows:
 ```python
-import uasyncio as asyncio
+import asyncio
 async def printit():
     print('Got here')
     await asyncio.sleep(1)
@@ -1760,7 +1759,7 @@ asyncio.run(bar())
 ```
 The exception may be trapped as follows:
 ```python
-import uasyncio as asyncio
+import asyncio
 async def printit():
     print('Got here')
     await asyncio.sleep(1)
@@ -1801,15 +1800,15 @@ class Foo:
 
 ## 5.2.2 Tasks with timeouts
 
-Timeouts are implemented by means of `uasyncio` methods `.wait_for()` and
+Timeouts are implemented by means of `asyncio` methods `.wait_for()` and
 `.wait_for_ms()`. These take as arguments a task and a timeout in seconds or ms
-respectively. If the timeout expires, a `uasyncio.CancelledError` is thrown to
+respectively. If the timeout expires, a `asyncio.CancelledError` is thrown to
 the task, while the caller receives a `TimeoutError`. Trapping the exception in
 the task is optional. The caller must trap the `TimeoutError`, otherwise the
 exception will interrupt program execution.
 
 ```python
-import uasyncio as asyncio
+import asyncio
 
 async def forever():
     try:
@@ -1858,8 +1857,8 @@ The behaviour is "correct": CPython `asyncio` behaves identically. Ref
 
 # 6 Interfacing hardware
 
-At heart, all interfaces between `uasyncio` and external asynchronous events
-rely on polling. This is because of the cooperative nature of `uasyncio`
+At heart, all interfaces between `asyncio` and external asynchronous events
+rely on polling. This is because of the cooperative nature of `asyncio`
 scheduling: the task which is expected to respond to the event can only acquire
 control after another task has relinquished it. There are two ways to handle
 this.
@@ -1965,7 +1964,7 @@ true in this example but the code fakes it with `await asyncio.sleep(0.1)`.
 Link pins X1 and X2 to run.
 
 ```python
-import uasyncio as asyncio
+import asyncio
 from pyb import UART
 
 class RecordOrientedUart():
@@ -2014,6 +2013,12 @@ asyncio.run(run())
 
 ## 6.3 Using the stream mechanism
 
+A stream is an abstraction of a device interface which consists of a realtime
+source of bytes. Examples include UARTs, I2S devices and sockets. Many streams
+are continuous: an I2S microphone will source data until switched off and the
+interface is closed. Streams are supported by `asyncio.StreamReader` and
+`asyncio.StreamWriter` classes.
+
 This section applies to platforms other than the Unix build. The latter handles
 stream I/O in a different way described
 [here](https://github.com/micropython/micropython/issues/7965#issuecomment-960259481).
@@ -2025,7 +2030,7 @@ demonstrates concurrent I/O on one UART. To run, link Pyboard pins X1 and X2
 (UART Txd and Rxd).
 
 ```python
-import uasyncio as asyncio
+import asyncio
 from machine import UART
 uart = UART(4, 9600, timeout=0)  # timeout=0 prevents blocking at low baudrates
 
@@ -2054,6 +2059,10 @@ async def main():
 
 asyncio.run(main())
 ```
+The `.readline` method will pause until `\n` is received.
+
+###### StreamWriter write methods
+
 Writing to a `StreamWriter` occurs in two stages. The synchronous `.write`
 method concatenates data for later transmission. The asynchronous `.drain`
 causes transmission. To avoid allocation call `.drain` after each call to
@@ -2069,14 +2078,32 @@ following methods: `ioctl`, `read`, `readline` and `write`. See
 [Writing streaming device drivers](./TUTORIAL.md#64-writing-streaming-device-drivers)
 for details on how such drivers may be written in Python.
 
-A UART can receive data at any time. The stream I/O mechanism checks for pending
-incoming characters whenever the scheduler has control. When a task is running
-an interrupt service routine buffers incoming characters; these will be removed
-when the task yields to the scheduler. Consequently UART applications should be
-designed such that tasks minimise the time between yielding to the scheduler to
-avoid buffer overflows and data loss. This can be ameliorated by using a larger
-UART read buffer or a lower baudrate. Alternatively hardware flow control will
-provide a solution if the data source supports it.
+###### StreamReader read methods
+
+The `StreamReader` read methods fall into two categories depending on whether
+they wait for a specific end condition. Thus `.readline` pauses until a newline
+byte has been received, `.read(-1)` waits for EOF, and `readexactly` waits for
+a precise number of bytes. Other methods return the number of bytes available
+at the time they are called (upto a maximum). Consider the following fragment:
+```python
+async def foo(device):
+    sr = StreamReader(device)
+    data = sr.read(20)
+```
+When `read` is issued, task `foo` is descheduled. Other tasks are scheduled,
+resulting in a delay. During that period, depending on the stream source, bytes
+may be received. The hardware or the device driver may buffer the data, at some
+point flagging their availability. When the concurrent tasks permit, asyncio
+polls the device. If data is available `foo` is rescheduled and pending data is
+returned. It should be evident that the number of bytes returned and the
+duration of the pause are variable.
+
+There are also implications for application and device driver design: in the
+period while the task is descheduled, incoming data must be buffered to avoid
+data loss. For example in the case of a UART an interrupt service routine
+buffers incoming characters. To avoid data loss the size of the read buffer
+should be set based on the maximum latency caused by other tasks along with the
+baudrate. The buffer size can be reduced if hardware flow control is available.
 
 ### 6.3.1 A UART driver example
 
@@ -2132,7 +2159,7 @@ It should return immediately. The return value is the number of characters
 actually written (may well be 1 if the device is slow). The `ioctl` method
 ensures that this is only called if the device is ready to accept data.
 
-Note that this has changed relative to `uasyncio` V2. Formerly `write` had
+Note that this has changed relative to `asyncio` V2. Formerly `write` had
 two additional mandatory args. Existing code will fail because `Stream.drain`
 calls `write` with a single arg (which can be a `memoryview`).
 
@@ -2163,7 +2190,7 @@ class MyIO(io.IOBase):
 
 The following is a complete awaitable delay class.
 ```python
-import uasyncio as asyncio
+import asyncio
 import utime
 import io
 MP_STREAM_POLL_RD = const(1)
@@ -2204,7 +2231,7 @@ asyncio.run(timer_test(20))
 ```
 
 This currently confers no benefit over `await asyncio.sleep_ms()`, however if
-`uasyncio` implements fast I/O scheduling it will be capable of more precise
+`asyncio` implements fast I/O scheduling it will be capable of more precise
 timing. This is because I/O will be tested on every scheduler call. Currently
 it is polled once per complete pass, i.e. when all other pending tasks have run
 in round-robin fashion.
@@ -2215,7 +2242,7 @@ is descheduled until `ioctl` returns a ready status. The following runs a
 callback when a pin changes state.
 
 ```python
-import uasyncio as asyncio
+import asyncio
 import io
 MP_STREAM_POLL_RD = const(1)
 MP_STREAM_POLL = const(3)
@@ -2230,7 +2257,7 @@ class PinCall(io.IOBase):
         self.cbf_args = cbf_args
         self.pinval = pin.value()
         self.sreader = asyncio.StreamReader(self)
-        asyncio.create_task(self.run())
+        self.task = asyncio.create_task(self.run())
 
     async def run(self):
         while True:
@@ -2307,13 +2334,13 @@ hang the entire system. When developing, it is useful to have a task which
 periodically toggles an onboard LED. This provides confirmation that the
 scheduler is running.
 
-## 7.2 uasyncio retains state
+## 7.2 asyncio retains state
 
-If a `uasyncio` application terminates, the state is retained. Embedded code seldom
+If a `asyncio` application terminates, the state is retained. Embedded code seldom
 terminates, but in testing, it is useful to re-run a script without the need for
 a soft reset. This may be done as follows:
 ```python
-import uasyncio as asyncio
+import asyncio
 
 async def main():
     await asyncio.sleep(5)  # Dummy test script
@@ -2403,7 +2430,7 @@ A coro instance is created and discarded, typically leading to a program
 silently failing to run correctly:
 
 ```python
-import uasyncio as asyncio
+import asyncio
 async def foo():
     await asyncio.sleep(1)
     print('done')
@@ -2418,13 +2445,13 @@ asyncio.run(main())
 
 ## 7.6 Socket programming
 
-There are two basic approaches to socket programming under `uasyncio`. By
+There are two basic approaches to socket programming under `asyncio`. By
 default sockets block until a specified read or write operation completes.
-`uasyncio` supports blocking sockets by using `select.poll` to prevent them
+`asyncio` supports blocking sockets by using `select.poll` to prevent them
 from blocking the scheduler. In most cases it is simplest to use this
 mechanism. Example client and server code may be found in the `client_server`
 directory. The `userver` application uses `select.poll` explicitly to poll
-the server socket. The client sockets use it implicitly in that the `uasyncio`
+the server socket. The client sockets use it implicitly in that the `asyncio`
 stream mechanism employs it.
 
 Note that `socket.getaddrinfo` currently blocks. The time will be minimal in
@@ -2449,7 +2476,7 @@ practice a timeout is likely to be required to cope with server outages.
 
 ### 7.6.1 WiFi issues
 
-The `uasyncio` stream mechanism is not good at detecting WiFi outages. I have
+The `asyncio` stream mechanism is not good at detecting WiFi outages. I have
 found it necessary to use nonblocking sockets to achieve resilient operation
 and client reconnection in the presence of outages.
 
@@ -2487,7 +2514,7 @@ with
 loop = asyncio.get_event_loop()
 loop.create_task(my_task())
 ```
-Event loop methods are supported in `uasyncio` and in CPython 3.8 but are
+Event loop methods are supported in `asyncio` and in CPython 3.8 but are
 deprecated. To quote from the official docs:
 
 Application developers should typically use the high-level asyncio functions,
@@ -2500,7 +2527,7 @@ This doc offers better alternatives to `get_event_loop` if you can confine
 support to CPython V3.8+.
 
 There is an event loop method `run_forever` which takes no args and causes the
-event loop to run. This is supported by `uasyncio`. This has use cases, notably
+event loop to run. This is supported by `asyncio`. This has use cases, notably
 when all of an application's tasks are instantiated in other modules.
 
 ## 7.8 Race conditions
@@ -2527,7 +2554,7 @@ one is running, or to extend the timer to prolong the LED illumination.
 Alternatively a subsequent button press might be required to terminate the
 illumination. The "right" behaviour is application dependent.
 
-## 7.9 Undocumented uasyncio features
+## 7.9 Undocumented asyncio features
 
 These may be subject to change.
 
@@ -2545,11 +2572,11 @@ holds the exception (or `CancelledError`).
 
 These notes are intended for those new to asynchronous code. They start by
 outlining the problems which schedulers seek to solve, and give an overview of
-the `uasyncio` approach to a solution.
+the `asyncio` approach to a solution.
 
 [Section 8.5](./TUTORIAL.md#85-why-cooperative-rather-than-pre-emptive)
-discusses the relative merits of `uasyncio` and the `_thread` module and why
-you may prefer to use cooperative (`uasyncio`) over pre-emptive (`_thread`)
+discusses the relative merits of `asyncio` and the `_thread` module and why
+you may prefer to use cooperative (`asyncio`) over pre-emptive (`_thread`)
 scheduling.
 
 ###### [Contents](./TUTORIAL.md#contents)
@@ -2608,7 +2635,7 @@ class LED_flashable():
             # things to happen at the same time
 ```
 
-A cooperative scheduler such as `uasyncio` enables classes such as this to be
+A cooperative scheduler such as `asyncio` enables classes such as this to be
 created.
 
 ###### [Contents](./TUTORIAL.md#contents)
@@ -2620,12 +2647,12 @@ Assume you need to read a number of bytes from a socket. If you call
 return) until `n` bytes have been received. During this period the application
 will be unresponsive to other events.
 
-With `uasyncio` and a non-blocking socket you can write an asynchronous read
+With `asyncio` and a non-blocking socket you can write an asynchronous read
 method. The task requiring the data will (necessarily) block until it is
 received but during that period other tasks will be scheduled enabling the
 application to remain responsive.
 
-## 8.3 The uasyncio approach
+## 8.3 The asyncio approach
 
 The following class provides for an LED which can be turned on and off, and
 which can also be made to flash at an arbitrary rate. A `LED_async` instance
@@ -2634,13 +2661,13 @@ behaviour can be controlled by methods `on()`, `off()` and `flash(secs)`.
 
 ```python
 import pyb
-import uasyncio as asyncio
+import asyncio
 
 class LED_async():
     def __init__(self, led_no):
         self.led = pyb.LED(led_no)
         self.rate = 0
-        asyncio.create_task(self.run())
+        self.task = asyncio.create_task(self.run())
 
     async def run(self):
         while True:
@@ -2667,14 +2694,14 @@ They change the behaviour of the LED but return immediately. The flashing
 occurs "in the background". This is explained in detail in the next section.
 
 The class conforms with the OOP principle of keeping the logic associated with
-the device within the class. Further, the way `uasyncio` works ensures that
+the device within the class. Further, the way `asyncio` works ensures that
 while the LED is flashing the application can respond to other events. The
 example below flashes the four Pyboard LED's at different rates while also
 responding to the USR button which terminates the program.
 
 ```python
 import pyb
-import uasyncio as asyncio
+import asyncio
 from led_async import LED_async  # Class as listed above
 
 async def main():
@@ -2700,7 +2727,7 @@ asyncio.run(main())  # Execution passes to tasks.
 
 ###### [Contents](./TUTORIAL.md#contents)
 
-## 8.4 Scheduling in uasyncio
+## 8.4 Scheduling in asyncio
 
 Python 3.5 and MicroPython support the notion of an asynchronous function,
 known as a task. A task normally includes at least one `await` statement.
@@ -2749,7 +2776,7 @@ async def good_code():
 
 For the same reason it's bad practice to issue delays like `utime.sleep(1)`
 because that will lock out other tasks for 1s; use `await asyncio.sleep(1)`.
-Note that the delays implied by `uasyncio` methods `sleep` and  `sleep_ms` can
+Note that the delays implied by `asyncio` methods `sleep` and  `sleep_ms` can
 overrun the specified time. This is because while the delay is in progress
 other tasks will run. When the delay period completes, execution will not
 resume until the running task issues `await` or terminates. A well-behaved task
@@ -2852,22 +2879,22 @@ latency of these platforms.
 Using an ISR to set a flag is probably best reserved for situations where an
 ISR is already needed for other reasons.
 
-The above comments refer to an ideal scheduler. Currently `uasyncio` is not in
+The above comments refer to an ideal scheduler. Currently `asyncio` is not in
 this category, with worst-case latency being > `N`ms. The conclusions remain
 valid.
 
-This, along with other issues, is discussed in 
-[Interfacing uasyncio to interrupts](./INTERRUPTS.md).
+This, along with other issues, is discussed in
+[Interfacing asyncio to interrupts](./INTERRUPTS.md).
 
 ###### [Contents](./TUTORIAL.md#contents)
 
 # 10. Interfacing threaded code
 
-In the context of a `uasyncio` application, the `_thread` module has two main
+In the context of a `asyncio` application, the `_thread` module has two main
 uses:
  1. Defining code to run on another core (currently restricted to RP2).
  2. Handling blocking functions. The technique assigns the blocking function to
- another thread. The `uasyncio` system continues to run, with a single task
+ another thread. The `asyncio` system continues to run, with a single task
  paused pending the result of the blocking method.
 
 These techniques, and thread-safe classes to enable their use, are presented in

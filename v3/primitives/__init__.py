@@ -47,6 +47,8 @@ _attrs = {
     "ESwitch": "events",
     "EButton": "events",
     "RingbufQueue": "ringbuf_queue",
+    "Keyboard": "sw_array",
+    "SwArray": "sw_array",
 }
 
 # Copied from uasyncio.__init__.py

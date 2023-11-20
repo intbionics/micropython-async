@@ -5,6 +5,7 @@
 
 import uasyncio as asyncio
 from . import Delay_ms
+from . import RingbufQueue
 
 # An Event-like class that can wait on an iterable of Event-like instances.
 # .wait pauses until any passed event is set.
@@ -28,7 +29,7 @@ class WaitAny:
         await event.wait()
         self.evt.set()
         self.trig_event = event
- 
+
     def event(self):
         return self.trig_event
 
@@ -140,7 +141,7 @@ class EButton:
             await self._ltim.wait()
             self._ltim.clear()  # Clear the event
             self.long.set()  # User event
-            
+
     # Runs if suppress set. Delay response to single press until sure it is a single short pulse.
     async def _dtf(self):
         while True:

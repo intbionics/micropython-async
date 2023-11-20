@@ -1,15 +1,15 @@
 # Synopsis
 
-Using `Event` instances rather than callbacks in `uasyncio` device drivers can
+Using `Event` instances rather than callbacks in `asyncio` device drivers can
 simplify their design and standardise their APIs. It can also simplify
 application logic.
 
-This document assumes familiarity with `uasyncio`. See [official docs](http://docs.micropython.org/en/latest/library/uasyncio.html) and
+This document assumes familiarity with `asyncio`. See [official docs](http://docs.micropython.org/en/latest/library/asyncio.html) and
 [unofficial tutorial](https://github.com/peterhinch/micropython-async/blob/master/v3/docs/TUTORIAL.md).
 
 # 0. Contents
 
- 1. [An alternative to callbacks in uasyncio code](./EVENTS.md#1-an-alternative-to-callbacks-in-uasyncio-code)  
+ 1. [An alternative to callbacks in asyncio code](./EVENTS.md#1-an-alternative-to-callbacks-in-asyncio-code)  
  2. [Rationale](./EVENTS.md#2-rationale)  
  3. [Device driver design](./EVENTS.md#3-device-driver-design)  
  4. [Primitives](./EVENTS.md#4-primitives) Facilitating Event-based application logic  
@@ -23,12 +23,10 @@ This document assumes familiarity with `uasyncio`. See [official docs](http://do
  6. [Drivers](./EVENTS.md#6-drivers) Minimal Event-based drivers  
   6.1 [ESwitch](./EVENTS.md#61-eswitch) Debounced switch  
   6.2 [EButton](./EVENTS.md#62-ebutton) Debounced pushbutton with double and long press events  
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;6.2.1 [The suppress constructor argument](./EVENTS.md#621-the-suppress-constructor-argument)  
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;6.2.2 [The sense constructor argument](./EVENTS.md#622-the-sense-constructor-argument)  
- 7. [Ringbuf queue](./EVENTS.md#7-ringbuf-queue) A MicroPython optimised queue primitive.  
+
 [Appendix 1 Polling](./EVENTS.md#100-appendix-1-polling)  
 
-# 1. An alternative to callbacks in uasyncio code
+# 1. An alternative to callbacks in asyncio code
 
 Callbacks have two merits. They are familiar, and they enable an interface
 which allows an asynchronous application to be accessed by synchronous code.
@@ -49,7 +47,7 @@ async def handle_messages(input_stream):
 Callbacks are not a natural fit in this model. Viewing the declaration of a
 synchronous function, it is not evident how the function gets called or in what
 context the code runs. Is it an ISR? Is it called from another thread or core?
-Or is it a callback running in a `uasyncio` context? You cannot tell without
+Or is it a callback running in a `asyncio` context? You cannot tell without
 trawling the code. By contrast, a routine such as the above example is a self
 contained process whose context and intended behaviour are evident.
 
@@ -93,15 +91,15 @@ know to access this driver interface is the name of the bound `Event`.
 This doc aims to demostrate that the event based approach can simplify
 application logic by eliminating the need for callbacks.
 
-The design of `uasyncio` V3 and its `Event` class enables this approach
+The design of `asyncio` V3 and its `Event` class enables this approach
 because:
  1. A task waiting on an `Event` is put on a queue where it consumes no CPU
  cycles until the event is triggered.
- 2. The design of `uasyncio` can support large numbers of tasks (hundreds) on
+ 2. The design of `asyncio` can support large numbers of tasks (hundreds) on
  a typical microcontroller. Proliferation of tasks is not a problem, especially
  where they are small and spend most of the time paused waiting on queues.
 
-This contrasts with other schedulers (such as `uasyncio` V2) where there was no
+This contrasts with other schedulers (such as `asyncio` V2) where there was no
 built-in `Event` class; typical `Event` implementations used
 [polling](./EVENTS.md#100-appendix-1-polling) and were convenience objects
 rather than performance solutions.
@@ -151,7 +149,7 @@ Drivers exposing `Event` instances include:
 
 Applying `Events` to typical logic problems requires two new primitives:
 `WaitAny` and `WaitAll`. Each is an ELO. These primitives may be cancelled or
-subject to a timeout with `uasyncio.wait_for()`, although judicious use of
+subject to a timeout with `asyncio.wait_for()`, although judicious use of
 `Delay_ms` offers greater flexibility than `wait_for`.
 
 ## 4.1 WaitAny
@@ -164,7 +162,7 @@ The last ELO to trigger a `WaitAny` instance may also be retrieved by issuing
 the instance's `.event()` method.
 ```python
 from primitives import WaitAny
-async def foo(elo1, elo2)
+async def foo(elo1, elo2):
     evt = await WaitAny((elo1, elo2)).wait()
     if evt is elo1:
         # Handle elo1
@@ -323,222 +321,19 @@ async def foo():
 
 # 6. Drivers
 
-This document describes drivers for mechanical switches and pushbuttons. These
-have event based interfaces exclusively and support debouncing. The drivers are
-simplified alternatives for 
-[Switch](https://github.com/peterhinch/micropython-async/blob/master/v3/primitives/switch.py)
-and [Pushbutton](https://github.com/peterhinch/micropython-async/blob/master/v3/primitives/pushbutton.py),
-which also support callbacks.
+The following device drivers provide an `Event` based interface for switches and
+pushbuttons.
 
 ## 6.1 ESwitch
 
-This provides a debounced interface to a switch connected to gnd or to 3V3. A
-pullup or pull down resistor should be supplied to ensure a valid logic level
-when the switch is open. The default constructor arg `lopen=1` is for a switch
-connected between the pin and gnd, with a pullup to 3V3. Typically the pullup
-is internal, the pin being as follows:
-```python
-from machine import Pin
-pin_id = 0  # Depends on hardware
-pin = Pin(pin_id, Pin.IN, Pin.PULL_UP)
-```
-Constructor arguments:
-
- 1. `pin` The Pin instance: should be initialised as an input with a pullup or
- down as appropriate.
- 2. `lopen=1` Electrical level when switch is open circuit i.e. 1 is 3.3V, 0 is
- gnd.
- 
-Methods:
-
- 1. `__call__` Call syntax e.g. `myswitch()` returns the logical debounced
- state of the switch i.e. 0 if open, 1 if closed.
- 2. `deinit` No args. Cancels the polling task and clears bound `Event`s.
-
-Bound objects:
- 1. `debounce_ms` An `int`. Debounce time in ms. Default 50.
- 2. `close` An `Event` instance. Set on contact closure.
- 3. `open` An `Event` instance. Set on contact open.
-
-Application code is responsible for clearing the `Event` instances.  
-Usage example:
-```python
-import uasyncio as asyncio
-from machine import Pin
-from primitives import ESwitch
-es = ESwitch(Pin("Y1", Pin.IN, Pin.PULL_UP))
-
-async def closure():
-    while True:
-        es.close.clear()
-        await es.close.wait()
-        print("Closed")
-
-async def open():
-    while True:
-        es.open.clear()
-        await es.open.wait()
-        print("Open")
-
-async def main():
-    asyncio.create_task(open())
-    await closure()
-
-asyncio.run(main())
-```
-
-###### [Contents](./EVENTS.md#0-contents)
+This is now documented [here](./DRIVERS.md#31-eswitch-class).
 
 ## 6.2 EButton
- 
-This extends the functionality of `ESwitch` to provide additional events for
-long and double presses.
 
-This can support normally open or normally closed switches, connected to `gnd`
-(with a pullup) or to `3V3` (with a pull-down). The `Pin` object should be
-initialised appropriately. The default state of the switch can be passed in the
-optional "sense" parameter on the constructor, otherwise the assumption is that
-on instantiation the button is not pressed.
+This is now documented [here](./DRIVERS.md#41-ebutton-class).
 
-The Pushbutton class uses logical rather than physical state: a button's state
-is considered `True` if pressed, otherwise `False` regardless of its physical
-implementation.
-
-Constructor arguments:
-
- 1. `pin` Mandatory. The initialised Pin instance.
- 2. `suppress` Default `False`. See [section 6.2.1](./EVENTS.md#621-the-suppress-constructor-argument).
- 3. `sense` Default `None`. Optionally define the electrical connection: see
- [section 6.2.2](./EVENTS.md#622-the-sense-constructor-argument)
-
-Methods:
-
- 1. `__call__` Call syntax e.g. `mybutton()` Returns the logical debounced
- state of the button (`True` corresponds to pressed).
- 2. `rawstate()` Returns the logical instantaneous state of the button. There
- is probably no reason to use this.
- 3. `deinit` No args. Cancels the running task and clears all events.
-
-Bound `Event`s:
-
- 1. `press` Set on button press.
- 2. `release` Set on button release.
- 3. `long` Set if button press is longer than `EButton.long_press_ms`.
- 4. `double` Set if two button preses occur within `EButton.double_click_ms`.
-
-Application code is responsible for clearing these `Event`s
-
-Class attributes:
- 1. `debounce_ms` Debounce time in ms. Default 50.
- 2. `long_press_ms` Threshold time in ms for a long press. Default 1000.
- 3. `double_click_ms` Threshold time in ms for a double-click. Default 400.
-
-### 6.2.1 The suppress constructor argument
-
-Consider a button double-click. By default with `suppress=False` this will set
-the bound `Event` instances in order, as follows:
-
- * `press`
- * `release`
- * `press`
- * `release`
- * `double`
-
-Similarly a long press will trigger `press`, `long` and `release` in that
-order. Some
-applications may require only a single `Event` to be triggered. Setting
-`suppress=True` ensures this. Outcomes are as follows:
-
-| Occurence    | Events set      | Time of pimary event         |
-|:-------------|:----------------|:-----------------------------|
-| Short press  | press, release  | After `.double_click_ms`     |
-| Double press | double, release | When the second press occurs |
-| Long press   | long, release   | After `long_press_ms`        |
-
-The tradeoff is that the `press` and `release` events are delayed: the soonest
-it is possible to detect the lack of a double click is `.double_click_ms`ms
-after a short button press. Hence in the case of a short press when `suppress`
-is `True`, `press` and `release` events are set on expiration of the double
-click timer.
-
-### 6.2.2 The sense constructor argument
-
-In most applications it can be assumed that, at power-up, pushbuttons are not
-pressed. The default `None` value uses this assumption to read the pin state
-and to assign the result to the `False` (not pressed) state at power up. This
-works with normally open or normally closed buttons wired to either supply
-rail; this without programmer intervention.
-
-In certain use cases this assumption does not hold, and `sense` must explicitly
-be specified. This defines the logical state of the un-pressed button. Hence
-`sense=0` defines a button connected in such a way that when it is not pressed,
-the voltage on the pin is gnd.
-
-Whenever the pin value changes, the new value is compared with `sense` to
-determine whether the button is closed or open.
-
-###### [Contents](./EVENTS.md#0-contents)
-
-# 7. Ringbuf Queue
-
-The API of the `Queue` aims for CPython compatibility. This is at some cost to
-efficiency. As the name suggests, the `RingbufQueue` class uses a pre-allocated
-circular buffer which may be of any mutable type supporting the buffer protocol
-e.g. `list`, `array` or `bytearray`. 
-
-Attributes of `RingbufQueue`:
- 1. It is of fixed size, `Queue` can grow to arbitrary size.
- 2. It uses pre-allocated buffers of various types (`Queue` uses a `list`).
- 3. It is an asynchronous iterator allowing retrieval with `async for`.
- 4. It has an "overwrite oldest data" synchronous write mode.
-
-Constructor mandatory arg:
- * `buf` Buffer for the queue, e.g. list, bytearray or array. If an integer is
- passed, a list of this size is created. A  buffer of size `N` can hold a
- maximum of `N-1` items. Note that, where items on the queue are suitably
- limited, bytearrays or arrays are more efficient than lists.
-
-Synchronous methods (immediate return):  
- * `qsize` No arg. Returns the number of items in the queue.
- * `empty` No arg. Returns `True` if the queue is empty.
- * `full` No arg. Returns `True` if the queue is full.
- * `get_nowait` No arg. Returns an object from the queue. Raises `IndexError`
- if the queue is empty.
- * `put_nowait` Arg: the object to put on the queue. Raises `IndexError` if the
- queue is full. If the calling code ignores the exception the oldest item in
- the queue will be overwritten. In some applications this can be of use.
- * `peek` No arg. Returns oldest entry without removing it from the queue. This
- is a superset of the CPython compatible methods.
-
-Asynchronous methods:  
- * `put` Arg: the object to put on the queue. If the queue is full, it will
- block until space is available.
- * `get` Return an object from the queue. If empty, block until an item is
- available.
- 
-Retrieving items from the queue:
-
-The `RingbufQueue` is an asynchronous iterator. Results are retrieved using
-`async for`:
-```python
-async def handle_queued_data(q):
-    async for obj in q:
-        await asyncio.sleep(0)  # See below
-        # Process obj
-```
-The `sleep` is necessary if you have multiple tasks waiting on the queue,
-otherwise one task hogs all the data.
-
-The following illustrates putting items onto a `RingbufQueue` where the queue is
-not allowed to stall: where it becomes full, new items overwrite the oldest ones
-in the queue:
-```python
-def add_item(q, data):
-    try:
-        q.put_nowait(data)
-    except IndexError:
-        pass
-```
+Documentation for `Keyboard`, `SwArray` and `RingbufQueue` has also moved to
+[primtives](./DRIVERS.md).
 
 ###### [Contents](./EVENTS.md#0-contents)
 
@@ -547,20 +342,20 @@ def add_item(q, data):
 The primitives or drivers referenced here do not use polling with the following
 exceptions:
  1. Switch and pushbutton drivers. These poll the `Pin` instance for electrical
- reasons described below. 
+ reasons described below.
  2. `ThreadSafeFlag` and subclass `Message`: these use the stream mechanism.
 
 Other drivers and primitives are designed such that paused tasks are waiting on
 queues and are therefore using no CPU cycles.
 
 [This reference][1e] states that bouncing contacts can assume invalid logic
-levels for a period. It is a reaonable assumption that `Pin.value()` always
+levels for a period. It is a reasonable assumption that `Pin.value()` always
 returns 0 or 1: the drivers are designed to cope with any sequence of such
 readings. By contrast, the behaviour of IRQ's under such conditions may be
 abnormal. It would be hard to prove that IRQ's could never be missed, across
 all platforms and input conditions.
 
-Pin polling aims to use minimal resources, the main overhead being `uasyncio`'s
+Pin polling aims to use minimal resources, the main overhead being `asyncio`'s
 task switching overhead: typically about 250 μs. The default polling interval
 is 50 ms giving an overhead of ~0.5%.
 
