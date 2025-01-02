@@ -37,7 +37,6 @@ import uasyncio as asyncio
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.2.1 [Wait on multiple events](./TUTORIAL.md#321-wait-on-multiple-events) Pause until 1 of N events is set.  
   3.3 [Coordinating multiple tasks](./TUTORIAL.md#33-coordinating-multiple-tasks)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.3.1 [gather](./TUTORIAL.md#331-gather)  
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.3.2 [TaskGroups](./TUTORIAL.md#332-taskgroups) Not yet in official build.  
   3.4 [Semaphore](./TUTORIAL.md#34-semaphore)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.4.1 [BoundedSemaphore](./TUTORIAL.md#341-boundedsemaphore)  
   3.5 [Queue](./TUTORIAL.md#35-queue)  
@@ -46,7 +45,8 @@ import uasyncio as asyncio
   3.7 [Barrier](./TUTORIAL.md#37-barrier)  
   3.8 [Delay_ms](./TUTORIAL.md#38-delay_ms-class) Software retriggerable delay.  
   3.9 [Message](./TUTORIAL.md#39-message)  
-  3.10 [Synchronising to hardware](./TUTORIAL.md#310-synchronising-to-hardware)
+  3.10 [Message broker](./TUTORIAL.md#310-message-broker) A publish-subscribe model of messaging and control.  
+  3.11 [Synchronising to hardware](./TUTORIAL.md#311-synchronising-to-hardware)
   Debouncing switches, pushbuttons, ESP32 touchpads and encoder knobs. Taming ADC's.  
  4. [Designing classes for asyncio](./TUTORIAL.md#4-designing-classes-for-asyncio)  
   4.1 [Awaitable classes](./TUTORIAL.md#41-awaitable-classes)  
@@ -134,6 +134,10 @@ mip.install("github:peterhinch/micropython-async/v3/threadsafe")
 ```
 For non-networked targets use `mpremote` as described in
 [the official docs](http://docs.micropython.org/en/latest/reference/packages.html#installing-packages-with-mpremote).
+```bash
+$ mpremote mip install github:peterhinch/micropython-async/v3/primitives
+$ mpremote mip install github:peterhinch/micropython-async/v3/threadsafe
+```
 
 ###### [Main README](../README.md)
 
@@ -256,7 +260,7 @@ async def bar(x):
         await asyncio.sleep(1)  # Pause 1s
 
 async def main():
-    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
+    tasks = [None] * 3  # For CPython compaibility must store a reference see 2.2 Note
     for x in range(3):
         tasks[x] = asyncio.create_task(bar(x))
     await asyncio.sleep(10)
@@ -276,7 +280,7 @@ line `main.py` and runs forever.
 
 ## 2.2 Coroutines and Tasks
 
-The fundmental building block of `asyncio` is a coro. This is defined with
+The fundamental building block of `asyncio` is a coro. This is defined with
 `async def` and usually contains at least one `await` statement. This minimal
 example waits 1 second before printing a message:
 
@@ -285,12 +289,16 @@ async def bar():
     await asyncio.sleep(1)
     print('Done')
 ```
-
-V3 `asyncio` introduced the concept of a `Task`. A `Task` instance is created
-from a coro by means of the `create_task` method, which causes the coro to be
-scheduled for execution and returns a `Task` instance. In many cases, coros and
-tasks are interchangeable: the official docs refer to them as `awaitable`, for
-the reason that either of them may be the target of an `await`. Consider this:
+Just as a function does nothing until called, a coro does nothing until awaited
+or converted to a `Task`. The `create_task` method takes a coro as its argument
+and returns a `Task` instance, which is scheduled for execution. In
+```python
+async def foo():
+    await coro
+```
+`coro` is run with `await` pausing until `coro` has completed. Sometimes coros
+and tasks are interchangeable: the CPython docs refer to them as `awaitable`,
+because either may be the target of an `await`. Consider this:
 
 ```python
 import asyncio
@@ -344,7 +352,7 @@ async def bar(x):
         await asyncio.sleep(1)  # Pause 1s
 
 async def main():
-    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
+    tasks = [None] * 3  # For CPython compaibility must store a reference see 2.2 Note
     for x in range(3):
         tasks[x] = asyncio.create_task(bar(x))
     print('Tasks are running')
@@ -582,6 +590,8 @@ following classes which are non-standard, are also in that directory:
  in a similar (but not identical) way to `gather`.
  * `Delay_ms` A useful software-retriggerable monostable, akin to a watchdog.
  Calls a user callback if not cancelled or regularly retriggered.
+ * `RingbufQueue` a MicroPython-optimised queue.
+ * `Broker` a means of messaging and control based on a publish/subscribe model.
 
 A further set of primitives for synchronising hardware are detailed in
 [section 3.9](./TUTORIAL.md#39-synchronising-to-hardware).
@@ -614,13 +624,52 @@ The following provides a discussion of the primitives.
 
 ## 3.1 Lock
 
-This describes the use of the official `Lock` primitive.
+This describes the use of the official `Lock` primitive. This guarantees unique
+access to a shared resource.
+```python
+from asyncio import Lock
+lock = Lock()
+```
+Synchronous methods:
+ * `locked` No args. Returns `True` if locked.
+ * `release` No args. Releases the lock. See note below.
 
-This guarantees unique access to a shared resource. In the following code
+Asynchronous method:
+ * `acquire` No args. Pauses until the lock has been acquired. Use by executing
+ `await lock.acquire()`.
+
+A task waiting on a lock may be cancelled or may be run subject to a timeout.
+The normal way to use a `Lock` is in a context manager. In the following code
 sample a `Lock` instance `lock` has been created and is passed to all tasks
 wishing to access the shared resource. Each task attempts to acquire the lock,
 pausing execution until it succeeds.
+```python
+import asyncio
+from asyncio import Lock
 
+async def task(i, lock):
+    while 1:
+        async with lock:
+            print("Acquired lock in task", i)
+            await asyncio.sleep(0.5)
+
+async def main():
+    lock = Lock()  # The Lock instance
+    tasks = [None] * 3  # For CPython compaibility must store a reference see 2.2 Note
+    for n in range(1, 4):
+        tasks[n - 1] = asyncio.create_task(task(n, lock))
+    await asyncio.sleep(10)
+
+asyncio.run(main())  # Run for 10s
+```
+Use of a context manager is strongly recommended - otherwise an application must
+ensure that `.release` is only ever called when that same task has called
+`.locked`. Calling `.release` on an unlocked `Lock` will raise a `ValueError`.
+Calling it on a `Lock` which has been locked by another task will cause that
+second task to produce a `ValueError` when it attempts to release the `Lock` or
+when its context manager exits. Context managers avoid these issues.
+
+For the brave the following illustrates use without a CM.
 ```python
 import asyncio
 from asyncio import Lock
@@ -634,44 +683,13 @@ async def task(i, lock):
 
 async def main():
     lock = Lock()  # The Lock instance
-    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
+    tasks = [None] * 3  # For CPython compaibility must store a reference see 2.2 Note
     for n in range(1, 4):
         tasks[n - 1] = asyncio.create_task(task(n, lock))
     await asyncio.sleep(10)
 
 asyncio.run(main())  # Run for 10s
 ```
-
-Methods:
-
- * `locked` No args. Returns `True` if locked.
- * `release` No args. Releases the lock.
- * `acquire` No args. Coro which pauses until the lock has been acquired. Use
- by executing `await lock.acquire()`.
-
-A task waiting on a lock may be cancelled or may be run subject to a timeout.
-The normal way to use a `Lock` is in a context manager:
-
-```python
-import asyncio
-from asyncio import Lock
-
-async def task(i, lock):
-    while 1:
-        async with lock:
-            print("Acquired lock in task", i)
-            await asyncio.sleep(0.5)
-
-async def main():
-    lock = Lock()  # The Lock instance
-    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
-    for n in range(1, 4):
-        tasks[n - 1] = asyncio.create_task(task(n, lock))
-    await asyncio.sleep(10)
-
-asyncio.run(main())  # Run for 10s
-```
-
 ###### [Contents](./TUTORIAL.md#contents)
 
 ## 3.2 Event
@@ -793,14 +811,17 @@ yet officially supported by MicroPython.
 
 ### 3.3.1 gather
 
-This official `asyncio` asynchronous method causes a number of tasks to run,
-pausing until all have either run to completion or been terminated by
+This official `asyncio` asynchronous method causes a number of awaitables to
+run, pausing until all have either run to completion or been terminated by
 cancellation or timeout. It returns a list of the return values of each task.
 
 Its call signature is
 ```python
-res = await asyncio.gather(*tasks, return_exceptions=False)
+res = await asyncio.gather(*awaitables, return_exceptions=False)
 ```
+`awaitables` may comprise tasks or coroutines, the latter being converted to
+tasks.
+
 The keyword-only boolean arg `return_exceptions` determines the behaviour in
 the event of a cancellation or timeout of tasks. If `False`, the `gather`
 terminates immediately, raising the relevant exception which should be trapped
@@ -856,79 +877,6 @@ async def main():
 
 asyncio.run(main())
 ```
-### 3.3.2 TaskGroups
-
-The `TaskGroup` class is unofficially provided by
-[this PR](https://github.com/micropython/micropython/pull/8791). It is well
-suited to applications where one or more of a group of tasks is subject to
-runtime exceptions. A `TaskGroup` is instantiated in an asynchronous context
-manager. The `TaskGroup` instantiates member tasks. When all have run to
-completion, the context manager terminates. Where `gather` is static, a task
-group can be dynamic: a task in a group may spawn further group members. Return
-values from member tasks cannot be retrieved. Results should be passed in other
-ways such as via bound variables, queues etc.
-
-An exception in a member task not trapped by that task is propagated to the
-task that created the `TaskGroup`. All tasks in the `TaskGroup` then terminate
-in an orderly fashion: cleanup code in any `finally` clause will run. When all
-cleanup code has completed, the context manager completes, and execution passes
-to an exception handler in an outer scope.
-
-If a member task is cancelled in code, that task terminates in an orderly way
-but the other members continue to run.
-
-The following illustrates the basic salient points of using a `TaskGroup`:
-```python
-import asyncio
-async def foo(n):
-    for x in range(10 + n):
-        print(f"Task {n} running.")
-        await asyncio.sleep(1 + n/10)
-    print(f"Task {n} done")
-
-async def main():
-    async with asyncio.TaskGroup() as tg:  # Context manager pauses until members terminate
-        for n in range(4):
-            tg.create_task(foo(n))  # tg.create_task() creates a member task
-    print("TaskGroup done")  # All tasks have terminated
-
-asyncio.run(main())
-```
-This more complete example illustrates an exception which is not trapped by the
-member task. Cleanup code on all members runs when the exception occurs,
-followed by exception handling code in `main()`.
-```python
-import asyncio
-fail = True  # Set False to demo normal completion
-async def foo(n):
-    print(f"Task {n} running...")
-    try:
-        for x in range(10 + n):
-            await asyncio.sleep(1 + n/10)
-            if n==0 and x==5 and fail:
-                raise OSError("Uncaught exception in task.")
-        print(f"Task {n} done")
-    finally:
-        print(f"Task {n} cleanup")
-
-async def main():
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for n in range(4):
-                tg.create_task(foo(n))
-        print("TaskGroup done")  # Does not get here if a task throws exception
-    except Exception as e:
-        print(f'TaskGroup caught exception: "{e}"')
-    finally:
-        print("TaskGroup finally")
-
-asyncio.run(main())
-```
-[This doc](https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/)
-provides background on the theory behind task groups and how they can improve
-program structure and reliablity.
-
-###### [Contents](./TUTORIAL.md#contents)
 
 ## 3.4 Semaphore
 
@@ -966,7 +914,7 @@ async def foo(n, sema):
 
 async def main():
     sema = Semaphore()
-    tasks = [None] * 3  # For CPython compaibility must store a reference see Note
+    tasks = [None] * 3  # For CPython compaibility must store a reference see 2.2 Note
     for num in range(3):
         tasks[num] = asyncio.create_task(foo(num, sema))
     await asyncio.sleep(2)
@@ -1074,8 +1022,9 @@ running in another thread or on another core. It operates in a similar way to
  * It is self-clearing.
  * Only one task may wait on the flag.
 
-Synchronous method:
+Synchronous methods:
  * `set` Triggers the flag. Like issuing `set` then `clear` to an `Event`.
+ * `clear` Unconditionally clear down the flag.
 
 Asynchronous method:
  * `wait` Wait for the flag to be set. If the flag is already set then it
@@ -1152,7 +1101,9 @@ class which allows multiple tasks to wait on it.
 
 ### 3.6.1 Querying a ThreadSafeFlag
 
-The state of a ThreadSafeFlag may be tested as follows:
+The `ThreadSafeFlag` class has no equivalent to `Event.is_set`. A synchronous
+function which returns the state of a `ThreadSafeFlag` instance may be created
+as follows:
 ```python
 import asyncio
 from select import poll, POLLIN
@@ -1163,14 +1114,14 @@ async def foo(tsf):  # Periodically set the ThreadSafeFlag
         await asyncio.sleep(1)
         tsf.set()
 
-    def ready(tsf, poller):
-        r = (tsf, POLLIN)
-        poller.register(*r)
+def ready(tsf, poller):  # Return a function which returns tsf status
+    r = (tsf, POLLIN)
+    poller.register(*r)
 
-        def is_rdy():
-            return r in poller.ipoll(0)
+    def is_rdy():
+        return r in poller.ipoll(0)  # Immediate return
 
-        return is_rdy
+    return is_rdy
 
 async def test():
     tsf = asyncio.ThreadSafeFlag()
@@ -1190,8 +1141,11 @@ async def test():
 asyncio.run(test())
 ```
 The `ready` closure returns a nonblocking function which tests the status of a
-given flag. In the above example `.wait()` is not called until the flag has been
+passed flag. In this example `.wait()` is not called until the flag has been
 set, consequently `.wait()` returns rapidly.
+
+The `select.poll` mechanism works because `ThreadSafeFlag` is subclassed from
+`io.IOBase` and has an `ioctl` method.
 
 ###### [Contents](./TUTORIAL.md#contents)
 
@@ -1259,7 +1213,7 @@ async def main():
     sw1 = asyncio.StreamWriter(UART(1, 9600), {})
     sw2 = asyncio.StreamWriter(UART(2, 1200), {})
     barrier = Barrier(3)
-    tasks = [None] * 2  # For CPython compaibility must store a reference see Note
+    tasks = [None] * 2  # For CPython compaibility must store a reference see 2.2 Note
     for n, sw in enumerate((sw1, sw2)):
         tasks[n] = asyncio.create_task(sender(barrier, sw, n + 1))
     await provider(barrier)
@@ -1329,7 +1283,26 @@ provide an object similar to `Event` with the following differences:
 It may be found in the `threadsafe` directory and is documented
 [here](./THREADING.md#32-message).
 
-## 3.10 Synchronising to hardware
+## 3.10 Message broker
+
+A `Broker` is a means of communicating data and/or control within or between
+modules. It is typically a single global object, and uses a publish-subscribe
+model. A publication comprises a `topic` and a `message`; the latter may be any
+Python object. Tasks subscribe to a `topic` via an `agent` object. Whenever a
+publication, occurs all `agent` instances currently subscribed to that topic are
+triggered.
+
+An `agent` may be an instance of various types including a function, a coroutine
+or a queue.
+
+A benefit of this approach is that the design of publishing tasks can proceed
+independently from that of the subscribers; `agent` instances can be subscribed
+and unsubscribed at run time with no effect on the publisher. The publisher
+neither knows or cares about the type or number of subscribing `agent`s.
+
+This is [documented here](https://github.com/peterhinch/micropython-async/blob/master/v3/docs/DRIVERS.md#9-message-broker).
+
+## 3.11 Synchronising to hardware
 
 The following hardware-related classes are documented [here](./DRIVERS.md):
  * `ESwitch` A debounced switch with an `Event` interface.
@@ -2061,7 +2034,7 @@ asyncio.run(main())
 ```
 The `.readline` method will pause until `\n` is received.
 
-###### StreamWriter write methods
+##### StreamWriter write methods
 
 Writing to a `StreamWriter` occurs in two stages. The synchronous `.write`
 method concatenates data for later transmission. The asynchronous `.drain`
@@ -2078,7 +2051,7 @@ following methods: `ioctl`, `read`, `readline` and `write`. See
 [Writing streaming device drivers](./TUTORIAL.md#64-writing-streaming-device-drivers)
 for details on how such drivers may be written in Python.
 
-###### StreamReader read methods
+##### StreamReader read methods
 
 The `StreamReader` read methods fall into two categories depending on whether
 they wait for a specific end condition. Thus `.readline` pauses until a newline
@@ -2104,6 +2077,40 @@ data loss. For example in the case of a UART an interrupt service routine
 buffers incoming characters. To avoid data loss the size of the read buffer
 should be set based on the maximum latency caused by other tasks along with the
 baudrate. The buffer size can be reduced if hardware flow control is available.
+
+##### StreamReader read timeout
+
+It is possible to apply a timeout to a stream. One approach is to subclass
+`StreamReader` as follows:
+```python
+class StreamReaderTo(asyncio.StreamReader):
+    def __init__(self, source):
+        super().__init__(source)
+        self._delay_ms = Delay_ms()  # Allocate once only
+
+    # Task cancels itself if timeout elapses without a byte being received
+    async def readintotim(self, buf: bytearray, toms: int) -> int:  # toms: timeout in ms
+        mvb = memoryview(buf)
+        timer = self._delay_ms
+        timer.callback(asyncio.current_task().cancel)
+        timer.trigger(toms)  # Start cancellation timer
+        n = 0
+        nbytes = len(buf)
+        try:
+            while n < nbytes:
+                n += await super().readinto(mvb[n:])
+                timer.trigger(toms)  # Retrigger when bytes received
+        except asyncio.CancelledError:
+            pass
+        timer.stop()
+        return n
+```
+This adds a `.readintotim` asynchronous method. Like `.readinto` it reads into a
+supplied buffer but the read is subject to a timeout `to` in ms. The read pauses
+until either the buffer is full or until bytes stop arriving for a time longer
+than `to`. The method returns the number of bytes received. If fewer bytes were
+received than would fill the buffer, a timeout occurred. The script
+[stream_to.py](../as_demos/stream_to.py) demonstrates this.
 
 ### 6.3.1 A UART driver example
 
@@ -2286,7 +2293,7 @@ class PinCall(io.IOBase):
 Once again latency can be high: if implemented fast I/O scheduling will improve
 this.
 
-The demo program [iorw.py](./as_demos/iorw.py) illustrates a complete example.
+The demo program [iorw.py](../as_demos/iorw.py) illustrates a complete example.
 
 ###### [Contents](./TUTORIAL.md#contents)
 
@@ -2449,10 +2456,8 @@ There are two basic approaches to socket programming under `asyncio`. By
 default sockets block until a specified read or write operation completes.
 `asyncio` supports blocking sockets by using `select.poll` to prevent them
 from blocking the scheduler. In most cases it is simplest to use this
-mechanism. Example client and server code may be found in the `client_server`
-directory. The `userver` application uses `select.poll` explicitly to poll
-the server socket. The client sockets use it implicitly in that the `asyncio`
-stream mechanism employs it.
+mechanism. Note that the `asyncio` stream mechanism employs it. Example client
+and server code may be found in the `client_server` directory.
 
 Note that `socket.getaddrinfo` currently blocks. The time will be minimal in
 the example code but if a DNS lookup is required the blocking period could be

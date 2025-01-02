@@ -1,16 +1,15 @@
 # __init__.py Common functions for uasyncio primitives
 
-# Copyright (c) 2018-2022 Peter Hinch
+# Copyright (c) 2018-2024 Peter Hinch
 # Released under the MIT License (MIT) - see LICENSE file
 
-try:
-    import uasyncio as asyncio
-except ImportError:
-    import asyncio
+import asyncio
 
 
 async def _g():
     pass
+
+
 type_coro = type(_g())
 
 # If a callback is passed, run it and return.
@@ -22,13 +21,17 @@ def launch(func, tup_args):
         res = asyncio.create_task(res)
     return res
 
+
 def set_global_exception():
     def _handle_exception(loop, context):
         import sys
+
         sys.print_exception(context["exception"])
         sys.exit()
+
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(_handle_exception)
+
 
 _attrs = {
     "AADC": "aadc",
@@ -44,14 +47,17 @@ _attrs = {
     "Switch": "switch",
     "WaitAll": "events",
     "WaitAny": "events",
+    "ELO": "events",
     "ESwitch": "events",
     "EButton": "events",
     "RingbufQueue": "ringbuf_queue",
     "Keyboard": "sw_array",
     "SwArray": "sw_array",
+    "Broker": "broker",
+    "Agent": "broker",
 }
 
-# Copied from uasyncio.__init__.py
+# Copied from asyncio.__init__.py
 # Lazy loader, effectively does:
 #   global attr
 #   from .mod import attr

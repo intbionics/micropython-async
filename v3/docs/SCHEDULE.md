@@ -3,24 +3,31 @@
  1. [Scheduling tasks](./SCHEDULE.md#1-scheduling-tasks)  
  2. [Overview](./SCHEDULE.md#2-overview)  
  3. [Installation](./SCHEDULE.md#3-installation)  
- 4. [The schedule function](./SCHEDULE.md#4-the-schedule-function) The primary interface for uasyncio  
+ 4. [The schedule coroutine](./SCHEDULE.md#4-the-schedule-coroutine) The primary interface for asyncio.  
   4.1 [Time specifiers](./SCHEDULE.md#41-time-specifiers)  
   4.2 [Calendar behaviour](./SCHEDULE.md#42-calendar-behaviour) Calendars can be tricky...  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4.2.1 [Behaviour of mday and wday values](./SCHEDULE.md#421-behaviour-of-mday-and-wday-values)  
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4.2.2 [Time causing month rollover](./SCHEDULE.md#422-time-causing-month-rollover)  
   4.3 [Limitations](./SCHEDULE.md#43-limitations)  
   4.4 [The Unix build](./SCHEDULE.md#44-the-unix-build)  
- 5. [The cron object](./SCHEDULE.md#5-the-cron-object) For hackers and synchronous coders  
+  4.5 [Callback interface](./SCHEDULE.md#45-callback-interface) Alternative interface using callbacks.  
+  4.6 [Event interface](./SCHEDULE.md#46-event-interface) Alternative interface using Event instances.  
+5. [The cron object](./SCHEDULE.md#5-the-cron-object) The rest of this doc is for hackers and synchronous coders.   
   5.1 [The time to an event](./SCHEDULE.md#51-the-time-to-an-event)  
   5.2 [How it works](./SCHEDULE.md#52-how-it-works)  
  6. [Hardware timing limitations](./SCHEDULE.md#6-hardware-timing-limitations)  
  7. [Use in synchronous code](./SCHEDULE.md#7-use-in-synchronous-code) If you really must.  
   7.1 [Initialisation](./SCHEDULE.md#71-initialisation)__
  8. [The simulate script](./SCHEDULE.md#8-the-simulate-script) Rapidly test sequences.  
+ 9. [Daylight saving time](./SCHEDULE.md#9-daylight-saving-time) Notes on timezone and DST when running under an OS.  
 
-Release note:  
+Release note:
+7th Sep 2024 Document timezone and DST behaviour under Unix build.   
+11th Dec 2023 Document astronomy module, allowing scheduling based on Sun and
+Moon rise and set times.  
+23rd Nov 2023 Add asynchronous iterator interface.  
 3rd April 2023 Fix issue #100. Where an iterable is passed to `secs`, triggers
-must now be at least 10s apart (formerly 2s).
+must now be at least 10s apart (formerly 2s).  
 
 ##### [Tutorial](./TUTORIAL.md#contents)  
 ##### [Main V3 README](../README.md)
@@ -37,50 +44,65 @@ It is partly inspired by the Unix cron table, also by the
 latter it is less capable but is small, fast and designed for microcontroller
 use. Repetitive and one-shot events may be created.
 
-It is ideally suited for use with `uasyncio` and basic use requires minimal
-`uasyncio` knowledge. Users intending only to schedule callbacks can simply
-adapt the example code. It can be used in synchronous code and an example is
-provided.
+It is ideally suited for use with `asyncio` and basic use requires minimal
+`asyncio` knowledge. Example code is provided offering various ways of
+responding to timing triggers including running callbacks. The module can be
+also be used in synchronous code and an example is provided.
 
 It is cross-platform and has been tested on Pyboard, Pyboard D, ESP8266, ESP32
 and the Unix build.
 
+The `astronomy` module extends this to enable tasks to be scheduled at times
+related to Sun and Moon rise and set times. This is documented
+[here](https://github.com/peterhinch/micropython-samples/blob/master/astronomy/README.md).
+
 # 2. Overview
 
-The `schedule` function (`sched/sched.py`) is the interface for use with
-`uasyncio`. The function takes a callback and causes that callback to run at
-specified times. A coroutine may be substituted for the callback - at the
-specified times it will be promoted to a `Task` and run.
+The `schedule` coroutine (`sched/sched.py`) is the interface for use with
+`asyncio`. Three interface alternatives are offered which vary in the behaviour:
+which occurs when a scheduled trigger occurs:
+1. An asynchronous iterator is triggered.
+2. A user defined `Event` is set.
+3. A user defined callback or coroutine is launched.
 
-The `schedule` function instantiates a `cron` object (in `sched/cron.py`). This
-is the core of the scheduler: it is a closure created with a time specifier and
-returning the time to the next scheduled event. Users of `uasyncio` do not need
-to deal with `cron` instances.
+One or more `schedule` tasks may be assigned to a `Sequence` instance. This
+enables an `async for` statement to be triggered whenever any of the `schedule`
+tasks is triggered.
 
-This library can also be used in synchronous code, in which case `cron`
-instances must explicitly be created.
+Under the hood the `schedule` function instantiates a `cron` object (in
+`sched/cron.py`). This is the core of the scheduler: it is a closure created
+with a time specifier and returning the time to the next scheduled event. Users
+of `asyncio` do not need to deal with `cron` instances. This library can also be
+used in synchronous code, in which case `cron` instances must explicitly be
+created.
 
 ##### [Top](./SCHEDULE.md#0-contents)
 
 # 3. Installation
 
-Copy the `sched` directory and contents to the target's filesystem. It requires
-`uasyncio` V3 which is included in daily firmware builds and in release builds
-after V1.12.
-
-To install to an SD card using [rshell](https://github.com/dhylands/rshell)
-move to the parent directory of `sched` and issue:
+The `sched` directory and contents must be copied to the target's filesystem.
+This may be done with the official
+[mpremote](https://docs.micropython.org/en/latest/reference/mpremote.html):
+```bash
+$ mpremote mip install "github:peterhinch/micropython-async/v3/as_drivers/sched"
+```
+On networked platforms it may be installed with [mip](https://docs.micropython.org/en/latest/reference/packages.html).
+```py
+>>> mip.install("github:peterhinch/micropython-async/v3/as_drivers/sched")
+```
+Currently these tools install to `/lib` on the built-in Flash memory. To install
+to a Pyboard's SD card [rshell](https://github.com/dhylands/rshell) may be used.
+Move to `as_drivers` on the PC, run `rshell` and issue:
 ```
 > rsync sched /sd/sched
 ```
-Adapt the destination as appropriate for your hardware.
 
 The following files are installed in the `sched` directory.
  1. `cron.py` Computes time to next event.
- 2. `sched.py` The `uasyncio` `schedule` function: schedule a callback or coro.
+ 2. `sched.py` The `asyncio` `schedule` function: schedule a callback or coro.
  3. `primitives/__init__.py` Necessary for `sched.py`.
  4. `asynctest.py` Demo of asynchronous scheduling.
- 5. `synctest.py` Synchronous scheduling demo. For `uasyncio` phobics only.
+ 5. `synctest.py` Synchronous scheduling demo. For `asyncio` phobics only.
  6. `crontest.py` A test for `cron.py` code.
  7. `simulate.py` A simple script which may be adapted to prove that a `cron`
  instance will behave as expected. See [The simulate script](./SCHEDULE.md#8-the-simulate-script).
@@ -89,16 +111,27 @@ The following files are installed in the `sched` directory.
 The `crontest` script is only of interest to those wishing to adapt `cron.py`.
 It will run on any MicroPython target.
 
-# 4. The schedule function
+The [astronomy](https://github.com/peterhinch/micropython-samples/blob/master/astronomy/README.md)
+module may be installed with
+```bash
+$ mpremote mip install "github:peterhinch/micropython-samples/astronomy"
+```
 
-This enables a callback or coroutine to be run at intervals. The callable can
-be specified to run forever, once only or a fixed number of times. `schedule`
-is an asynchronous function.
+# 4. The schedule coroutine
+
+This enables a response to be triggered at intervals. The response can be
+specified to occur forever, once only or a fixed number of times. `schedule`
+is a coroutine and is typically run as a background task as follows:
+```python
+asyncio.create_task(schedule(foo, 'every 4 mins', hrs=None, mins=range(0, 60, 4)))
+```
 
 Positional args:
- 1. `func` The callable (callback or coroutine) to run. Alternatively an
- `Event` may be passed (see below).
- 2. Any further positional args are passed to the callable.
+ 1. `func` This may be a callable (callback or coroutine) to run, a user defined
+ `Event` or an instance of a `Sequence`.
+ 2. Any further positional args are passed to the callable or the `Sequence`;
+ these args can be used to enable the triggered object to determine the source
+ of the trigger.
 
 Keyword-only args. Args 1..6 are
 [Time specifiers](./SCHEDULE.md#41-time-specifiers): a variety of data types
@@ -120,65 +153,40 @@ the value returned by that run of the callable.
 Because `schedule` does not terminate promptly it is usually started with
 `asyncio.create_task`, as in the following example where a callback is
 scheduled at various times. The code below may be run by issuing
-```python
-import sched.asynctest
-```
-This is the demo code.
-```python
-import uasyncio as asyncio
-from sched.sched import schedule
-from time import localtime
-
-def foo(txt):  # Demonstrate callback
-    yr, mo, md, h, m, s, wd = localtime()[:7]
-    fst = 'Callback {} {:02d}:{:02d}:{:02d} on {:02d}/{:02d}/{:02d}'
-    print(fst.format(txt, h, m, s, md, mo, yr))
-
-async def bar(txt):  # Demonstrate coro launch
-    yr, mo, md, h, m, s, wd = localtime()[:7]
-    fst = 'Coroutine {} {:02d}:{:02d}:{:02d} on {:02d}/{:02d}/{:02d}'
-    print(fst.format(txt, h, m, s, md, mo, yr))
-    await asyncio.sleep(0)
-
-async def main():
-    print('Asynchronous test running...')
-    asyncio.create_task(schedule(foo, 'every 4 mins', hrs=None, mins=range(0, 60, 4)))
-    asyncio.create_task(schedule(foo, 'every 5 mins', hrs=None, mins=range(0, 60, 5)))
-    # Launch a coroutine
-    asyncio.create_task(schedule(bar, 'every 3 mins', hrs=None, mins=range(0, 60, 3)))
-    # Launch a one-shot task
-    asyncio.create_task(schedule(foo, 'one shot', hrs=None, mins=range(0, 60, 2), times=1))
-    await asyncio.sleep(900)  # Quit after 15 minutes
-
-try:
-    asyncio.run(main())
-finally:
-    _ = asyncio.new_event_loop()
-```
 The event-based interface can be simpler than using callables:
+
+The remainder of this section describes the asynchronous iterator interface as
+this is the simplest to use. The other interfaces are discussed in
+* [4.5 Callback interface](./SCHEDULE.md#45-callback-interface)
+* [4.6 Event interface](./SCHEDULE.md#46-event-interface)
+
+One or more `schedule` instances are collected in a `Sequence` object. This
+supports the asynchronous iterator interface:
 ```python
-import uasyncio as asyncio
-from sched.sched import schedule
+import asyncio
+from sched.sched import schedule, Sequence
 from time import localtime
 
 async def main():
     print("Asynchronous test running...")
-    evt = asyncio.Event()
-    asyncio.create_task(schedule(evt, hrs=10, mins=range(0, 60, 4)))
-    while True:
-        await evt.wait()  # Multiple tasks may wait on an Event
-        evt.clear()  # It must be cleared.
+    seq = Sequence()  # A Sequence comprises one or more schedule instances
+    asyncio.create_task(schedule(seq, 'every 4 mins', hrs=None, mins=range(0, 60, 4)))
+    asyncio.create_task(schedule(seq, 'every 5 mins', hrs=None, mins=range(0, 60, 5)))
+    asyncio.create_task(schedule(seq, 'every 3 mins', hrs=None, mins=range(0, 60, 3)))
+    # A one-shot trigger
+    asyncio.create_task(schedule(seq, 'one shot', hrs=None, mins=range(0, 60, 2), times=1))
+    async for args in seq:
         yr, mo, md, h, m, s, wd = localtime()[:7]
-        print(f"Event {h:02d}:{m:02d}:{s:02d} on {md:02d}/{mo:02d}/{yr}")
+        print(f"Event {h:02d}:{m:02d}:{s:02d} on {md:02d}/{mo:02d}/{yr} args: {args}")
 
 try:
     asyncio.run(main())
 finally:
     _ = asyncio.new_event_loop()
 ```
-See [tutorial](https://github.com/peterhinch/micropython-async/blob/master/v3/docs/TUTORIAL.md#32-event).
-Also [this doc](https://github.com/peterhinch/micropython-async/blob/master/v3/docs/EVENTS.md)
-for a discussion of event-based programming.
+Note that the asynchronous iterator produces a `tuple` of the args passed to the
+`schedule` that triggered it. This enables the code to determine the source of
+the trigger.
 
 ##### [Top](./SCHEDULE.md#0-contents)
 
@@ -201,7 +209,7 @@ Setting `secs=None` will cause a `ValueError`.
 
 Passing an iterable to `secs` is not recommended: this library is intended for
 scheduling relatively long duration events. For rapid sequencing, schedule a
-coroutine which awaits `uasyncio` `sleep` or `sleep_ms` routines. If an
+coroutine which awaits `asyncio` `sleep` or `sleep_ms` routines. If an
 iterable is passed, triggers must be at least ten seconds apart or a
 `ValueError` will result.
 
@@ -253,7 +261,7 @@ asyncio.create_task(schedule(foo, month=(2, 7, 10), hrs=1, mins=59))
 ## 4.3 Limitations
 
 The underlying `cron` code has a resolution of 1 second. The library is
-intended for scheduling infrequent events (`uasyncio` has its own approach to
+intended for scheduling infrequent events (`asyncio` has its own approach to
 fast scheduling).
 
 Specifying `secs=None` will cause a `ValueError`. The minimum interval between
@@ -264,26 +272,105 @@ A `cron` call typically takes 270 to 520μs on a Pyboard, but the upper bound
 depends on the complexity of the time specifiers.
 
 On hardware platforms the MicroPython `time` module does not handle daylight
-saving time. Scheduled times are relative to system time. This does not apply
-to the Unix build where daylight saving needs to be considered.
+saving time. Scheduled times are relative to system time. Under the Unix build,
+where the locale uses daylight saving, its effects should be considered. See
+[Daylight saving time](./SCHEDULE.md#9-daylight-saving-time).
 
 ## 4.4 The Unix build
 
-Asynchronous use requires `uasyncio` V3, so ensure this is installed on the
-Linux target.
+Asynchronous use requires `asyncio` V3, so ensure this is installed on the
+Linux target. This may be checked with:
+```py
+import asyncio
+asyncio.__version__
+```
+The module uses local time. When running under an OS, local time is affected by
+geographical longitude (timezone - TZ) and daylight saving time (DST). The use
+of local time avoids TZ issues but has consequences when the underlying time
+source changes due to crossing a DST boundary.
 
-The synchronous and asynchronous demos run under the Unix build. The module is
-usable on Linux provided the daylight saving time (DST) constraints are met. A
-consequence of DST is that there are impossible times when clocks go forward
-and duplicates when they go back. Scheduling those times will fail. A solution
-is to avoid scheduling the times in your region where this occurs (01.00.00 to
-02.00.00 in March and October here).
+This is explained in detail in [Daylight saving time](./SCHEDULE.md#9-daylight-saving-time).
+
+##### [Top](./SCHEDULE.md#0-contents)
+
+## 4.5 Callback interface
+
+In this instance a user defined `callable` is passed as the first `schedule` arg.
+A `callable` may be a function or a coroutine. It is possible for multiple
+`schedule` instances to call the same callback, as in the example below. The
+code is included in the library as `sched/asyntest.py` and may be run as below.
+```python
+import sched.asynctest
+```
+This is the demo code.
+```python
+import asyncio
+from sched.sched import schedule
+from time import localtime
+
+def foo(txt):  # Demonstrate callback
+    yr, mo, md, h, m, s, wd = localtime()[:7]
+    fst = 'Callback {} {:02d}:{:02d}:{:02d} on {:02d}/{:02d}/{:02d}'
+    print(fst.format(txt, h, m, s, md, mo, yr))
+
+async def bar(txt):  # Demonstrate coro launch
+    yr, mo, md, h, m, s, wd = localtime()[:7]
+    fst = 'Coroutine {} {:02d}:{:02d}:{:02d} on {:02d}/{:02d}/{:02d}'
+    print(fst.format(txt, h, m, s, md, mo, yr))
+    await asyncio.sleep(0)
+
+async def main():
+    print('Asynchronous test running...')
+    asyncio.create_task(schedule(foo, 'every 4 mins', hrs=None, mins=range(0, 60, 4)))
+    asyncio.create_task(schedule(foo, 'every 5 mins', hrs=None, mins=range(0, 60, 5)))
+    # Launch a coroutine
+    asyncio.create_task(schedule(bar, 'every 3 mins', hrs=None, mins=range(0, 60, 3)))
+    # Launch a one-shot task
+    asyncio.create_task(schedule(foo, 'one shot', hrs=None, mins=range(0, 60, 2), times=1))
+    await asyncio.sleep(900)  # Quit after 15 minutes
+
+try:
+    asyncio.run(main())
+finally:
+    _ = asyncio.new_event_loop()
+```
+##### [Top](./SCHEDULE.md#0-contents)
+
+## 4.6 Event interface
+
+In this instance a user defined `Event` is passed as the first `schedule` arg.
+It is possible for multiple `schedule` instances to trigger the same `Event`.
+The user is responsible for clearing the `Event`. This interface has a drawback
+in that extra positional args passed to `schedule` are lost.
+```python
+import asyncio
+from sched.sched import schedule
+from time import localtime
+
+async def main():
+    print("Asynchronous test running...")
+    evt = asyncio.Event()
+    asyncio.create_task(schedule(evt, hrs=10, mins=range(0, 60, 4)))
+    while True:
+        await evt.wait()  # Multiple tasks may wait on an Event
+        evt.clear()  # It must be cleared.
+        yr, mo, md, h, m, s, wd = localtime()[:7]
+        print(f"Event {h:02d}:{m:02d}:{s:02d} on {md:02d}/{mo:02d}/{yr}")
+
+try:
+    asyncio.run(main())
+finally:
+    _ = asyncio.new_event_loop()
+```
+See [tutorial](https://github.com/peterhinch/micropython-async/blob/master/v3/docs/TUTORIAL.md#32-event).
+Also [this doc](https://github.com/peterhinch/micropython-async/blob/master/v3/docs/EVENTS.md)
+for a discussion of event-based programming.
 
 ##### [Top](./SCHEDULE.md#0-contents)
 
 # 5. The cron object
 
-This is the core of the scheduler. Users of `uasyncio` do not need to concern
+This is the core of the scheduler. Users of `asyncio` do not need to concern
 themseleves with it. It is documented for those wishing to modify the code and
 for those wanting to perform scheduling in synchronous code.
 
@@ -342,7 +429,7 @@ applications. On my reference board timing drifted by 1.4mins/hr, an error of
 
 Boards with internet connectivity can periodically synchronise to an NTP server
 but this carries a risk of sudden jumps in the system time which may disrupt
-`uasyncio` and the scheduler.
+`asyncio` and the scheduler.
 
 ##### [Top](./SCHEDULE.md#0-contents)
 
@@ -403,9 +490,9 @@ main()
 ```
 
 In my opinion the asynchronous version is cleaner and easier to understand. It
-is also more versatile because the advanced features of `uasyncio` are
+is also more versatile because the advanced features of `asyncio` are
 available to the application including cancellation of scheduled tasks. The
-above code is incompatible with `uasyncio` because of the blocking calls to
+above code is incompatible with `asyncio` because of the blocking calls to
 `time.sleep()`.
 
 ## 7.1 Initialisation
@@ -445,9 +532,9 @@ def wait_for(**kwargs):
 
 # 8. The simulate script
 
-This enables the behaviour of sets of args to `schedule` to be rapidly checked.
-The `sim` function should be adapted to reflect the application specifics. The
-default is:
+In `sched/simulate.py`. This enables the behaviour of sets of args to `schedule`
+to be rapidly checked. The `sim` function should be adapted to reflect the
+application specifics. The default is:
 ```python
 def sim(*args):
     set_time(*args)
@@ -465,3 +552,84 @@ the value of system time when the delay ends. In this instance the start of a
 sequence is delayed to ensure that the first trigger occurs at 01:00.
 
 ##### [Top](./SCHEDULE.md#0-contents)
+
+# 9. Daylight saving time
+
+Thanks are due to @rhermanklink for raising this issue.
+
+This module is primarily intended for use on a microcontroller, where the time
+source is a hardware RTC. This is usually set to local time, and must not change
+for daylight saving time (DST); on a microcontroller neither this module nor
+`asyncio` will work correctly if system time is changed at runtime. Under an OS,
+some kind of thaumaturgy enables `asyncio` to tolerate this behaviour.
+
+Internally the module uses local time (`time.time()` and `time.localtime()`) to
+retrieve the current time. Under an OS, in a locale where DST is used, the time
+returned by these methods does not increase monotonically but is subject to
+sudden changes at a DST boundary.
+
+A `cron` instance accepts "time now" measured in seconds from the epoch, and
+returns the time to wait for the first scheduled event. This wait time is
+calculated on the basis of a monotonic local time. Assume that the time is
+10:00:00 on 1st August, and the first scheduled event is at 10:00:00 on 1st
+November. The `cron` instance will return the time to wait. The application task
+waits for that period, but local clocks will have changed so that the time reads
+9:00:00.
+
+The primary application for this module is on microcontrollers. Further, there
+are alternatives such as [Python schedule](https://github.com/dbader/schedule)
+which are designed to run under an OS. Fixing this would require a timezone
+solution; in many cases the application can correct for DST. Consequently this
+behaviour has been deemed to be in the "document, don't fix" category.
+
+The following notes are general observations which may be of interest.
+
+### The epoch
+
+The Python `time.time()` method returns the number of seconds since the epoch.
+This is computed relative to the system clock; consecutive calls around a DST
+change will yield a sudden change (+3600 secs for a +one hour change).
+This value may be converted to a time tuple with `time.gmtime(secs)` or with
+`time.localtime(secs)`. If UTC and local time differ, for the same value of
+`secs` these will produce UTC-relative and localtime-relative tuples.
+
+Consider `time.mktime()`. This converts a time tuple to a number of seconds
+since the epoch. The time difference between a specified time and the epoch is
+independent of timezone and DST. The specified time and the epoch are assumed to
+be defined in the same (unknown, unspecified) time system. Consequently, if a
+delay is defined by the difference between two `mktime()` values, that delay
+will be unaffected if a DST change occurs between those two values. This may be
+verified with the following script:
+```py
+from time import mktime, gmtime, localtime
+from sys import implementation
+cpython = implementation.name == 'cpython'
+if cpython:
+    from time import struct_time
+
+start = [2024, 9, 5, 11, 49, 2, 3, 249, 1]
+sept = round(mktime(struct_time(start))) if cpython else mktime(start)
+
+end = start[:]
+end[1] += 2  # Same time + 2months Crosses DST boundary in the UK
+
+november = round(mktime(struct_time(end))) if cpython else mktime(end)
+print(november - sept)
+
+if november - sept == 5270400:
+    print('PASS')
+else:
+    print('FAIL')
+```
+This test passes on the Unix build, under CPython, and on MicroPython on a
+microcontroller. It also passes under an OS if the system's local time differs
+substantially from UTC.
+
+The `cron` module returns a time difference between a passed time value and one
+produced by `mktime()`: accordingly `cron` takes no account of local time or
+DST. If local time is changed while waiting for the period specified by `cron`,
+at the end of the delay, clocks measuring local time will indicate an incorrect
+time.
+
+This is only an issue when running under an OS: if it is considered an error, it
+should be addressed in application code.

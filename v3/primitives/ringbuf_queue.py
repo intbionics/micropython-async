@@ -6,9 +6,11 @@
 # API differs from CPython
 # Uses pre-allocated ring buffer: can use list or array
 # Asynchronous iterator allowing consumer to use async for
-# put_nowait QueueFull exception can be ignored allowing oldest data to be discarded.
+# put_nowait QueueFull exception can be ignored allowing oldest data to be discarded -
+# this is not thread safe. Nor is the class as a whole TS because of its use of
+# Event objects.
 
-import uasyncio as asyncio
+import asyncio
 
 
 class RingbufQueue:  # MicroPython optimised

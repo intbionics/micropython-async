@@ -3,7 +3,7 @@
 # Copyright (c) 2018-2023 Peter Hinch
 # Released under the MIT License (MIT) - see LICENSE file
 
-import uasyncio as asyncio
+import asyncio
 import utime as time
 from . import launch, Delay_ms
 
@@ -78,7 +78,7 @@ class Pushbutton:
 
     def _ddto(self):  # Doubleclick timeout: no doubleclick occurred
         self._dblpend = False
-        if self._supp and not self._state:
+        if self._ff and self._supp and not self._state:
             if not self._ld or (self._ld and not self._ld()):
                 launch(self._ff, self._fa)
 
