@@ -1318,7 +1318,7 @@ from primitives import Broker, Agent
 
 broker = Broker()
 class MyAgent(Agent):
-    def put(sef, topic, message, arg):
+    def put(self, topic, message, arg):
         print(f"User agent. Topic: {topic} Message: {message} Arg: {arg}")
 
 async def sender(t):
